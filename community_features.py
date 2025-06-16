@@ -256,6 +256,20 @@ class CommunityFeatures:
         # 記錄投票
         vote['votes'][option].append(user_id)
         self.redis.setex(vote_key, 3600, json.dumps(vote))
+
+        # Log vote to Neo4j
+        if self.graph and self.graph.connected:
+            try:
+                self.graph.log_user_vote(
+                    user_id=user_id,
+                    vote_id=current_vote_id,
+                    vote_topic=vote['topic'],
+                    option_chosen=option
+                )
+                logger.info(f"Vote by {user_id} for vote {current_vote_id} ('{vote['topic']}') option '{option}' logged in Neo4j.")
+            except Exception as e:
+                # Log the error but don't let it break the primary functionality (voting in Redis)
+                logger.error(f"Failed to log vote in Neo4j for user {user_id}, vote {current_vote_id}: {e}")
         
         return {
             'success': True,
@@ -443,15 +457,31 @@ class CommunityFeatures:
                 'timestamp': firestore.SERVER_TIMESTAMP,
                 'status': 'approved' # Default status
             }
-            self.db.collection('jokes').add(joke_data)
-            logger.info(f"笑話已新增 by {user_id}")
+            doc_ref = self.db.collection('jokes').add(joke_data)
+            new_joke_firestore_id = doc_ref[1].id # add() returns a tuple (timestamp, DocumentReference)
+            logger.info(f"笑話已新增 by {user_id} to Firestore with ID: {new_joke_firestore_id}")
+
+            # Log submission to Neo4j
+            if self.graph and self.graph.connected:
+                try:
+                    # Use Firestore document ID as joke_id in Neo4j
+                    self.graph.log_joke_submission(
+                        user_id=user_id,
+                        joke_id=new_joke_firestore_id,
+                        joke_text_preview=joke_text[:50] # First 50 chars as preview
+                    )
+                    logger.info(f"Joke submission {new_joke_firestore_id} by {user_id} logged to Neo4j.")
+                except Exception as e_neo:
+                    logger.error(f"Failed to log joke submission {new_joke_firestore_id} to Neo4j: {e_neo}")
+                    # Non-critical error, so we don't change the user-facing success message
+
             return {'success': True, 'message': '😄 你的笑話已成功收錄！感謝分享！'}
         except Exception as e:
             logger.error(f"新增笑話失敗: {e}")
             return {'success': False, 'message': '😥 新增笑話失敗，請稍後再試'}
 
-    def get_random_joke(self) -> Dict:
-        """從 Firestore 獲取隨機笑話"""
+    def get_random_joke(self, user_id_for_cache: Optional[str] = None) -> Dict: # Added user_id for caching
+        """從 Firestore 獲取隨機笑話，並快取其 ID 給用戶"""
         if not self.db:
             return {'success': False, 'message': '❌ 笑話功能資料庫未連接'}
 
@@ -465,7 +495,8 @@ class CommunityFeatures:
                             .where(firestore.FieldPath.document_id(), '>=', random_key) \
                             .where('status', '==', 'approved') \
                             .limit(1)
-            docs = list(query.stream())
+            docs_cursor = query.stream() # Use cursor for potentially large result sets
+            docs = list(docs_cursor) # Convert to list to check length and access elements
 
             if not docs:
                 # If no doc found >= random_key, try < random_key (wraparound)
@@ -473,25 +504,90 @@ class CommunityFeatures:
                                 .where(firestore.FieldPath.document_id(), '<', random_key) \
                                 .where('status', '==', 'approved') \
                                 .limit(1)
-                docs = list(query.stream())
+                docs_cursor_lt = query.stream()
+                docs = list(docs_cursor_lt)
 
             if docs:
-                joke_data = docs[0].to_dict()
-                # Ensure user_id is present, provide default if not (for older data perhaps)
+                joke_doc = docs[0] # Get the DocumentSnapshot
+                joke_firestore_id = joke_doc.id
+                joke_data = joke_doc.to_dict()
+
                 joke_user = joke_data.get('user_id', '匿名用戶')
+                joke_text_content = joke_data.get('text', '這個笑話不見了...')
+
+                # Cache the joke_firestore_id for the user who requested it
+                if user_id_for_cache and self.connected: # Check Redis connection
+                    try:
+                        redis_key = f"user:{user_id_for_cache}:last_joke_id"
+                        self.redis.setex(redis_key, 300, joke_firestore_id) # 5-minute expiry
+                        logger.info(f"Cached last joke ID {joke_firestore_id} for user {user_id_for_cache}")
+                    except Exception as e_redis:
+                        logger.error(f"Failed to cache last joke ID for user {user_id_for_cache}: {e_redis}")
+
                 return {
                     'success': True,
                     'joke': {
-                        'text': joke_data.get('text', '這個笑話不見了...'),
+                        'id': joke_firestore_id, # Include joke ID
+                        'text': joke_text_content,
                         'user': joke_user
                     },
-                    'message': f"🗣️ {joke_user} 分享的笑話：\n\n{joke_data.get('text', '這個笑話不見了...')}"
+                    'message': f"🗣️ {joke_user} 分享的笑話：\n\n{joke_text_content}" # Base message
                 }
+
+                # Attempt to add social context
+                social_context_str = ""
+                if self.graph and self.graph.connected and user_id_for_cache:
+                    try:
+                        friend_ids = self.graph.get_friends_who_liked_joke(user_id_for_cache, joke_firestore_id)
+                        if friend_ids:
+                            # Limit to display a few names to keep message concise
+                            display_friends = friend_ids[:2] # Show up to 2 names
+                            friends_list_str = ", ".join(display_friends)
+
+                            if len(friend_ids) == 1:
+                                social_context_str = f"\n\n💡 你的朋友 {friends_list_str} 也喜歡這個笑話！"
+                            elif len(friend_ids) > 1:
+                                additional_likes = len(friend_ids) - len(display_friends)
+                                if additional_likes > 0:
+                                    social_context_str = f"\n\n💡 你的朋友們 {friends_list_str} 及其他 {additional_likes} 位也喜歡這個笑話！"
+                                else:
+                                    social_context_str = f"\n\n💡 你的朋友們 {friends_list_str} 也都喜歡這個笑話！"
+                    except Exception as e_social:
+                        logger.error(f"Error getting joke social context for joke {joke_firestore_id}: {e_social}")
+
+                # Append social context if available
+                response_data['message'] += social_context_str
+                return response_data
             else:
                 return {'success': False, 'message': '目前還沒有笑話，快來輸入「笑話 [內容]」分享一個吧！'}
         except Exception as e:
             logger.error(f"獲取笑話失敗: {e}")
             return {'success': False, 'message': '😥 獲取笑話時發生錯誤，請稍後再試'}
+
+    def like_last_joke(self, user_id: str) -> Dict:
+        """對用戶上一個看到的笑話按讚"""
+        if not self.connected: # Check Redis
+            return {'success': False, 'message': self.not_connected_message}
+        if not self.graph or not self.graph.connected: # Check Neo4j
+             return {'success': False, 'message': '❌ 評價功能暫時無法連接知識圖譜'}
+
+        try:
+            redis_key = f"user:{user_id}:last_joke_id"
+            last_joke_id = self.redis.get(redis_key)
+
+            if not last_joke_id:
+                return {'success': False, 'message': '您最近沒有看過笑話，或者時間太久了，無法評價。'}
+
+            # Log the like to Neo4j
+            self.graph.log_joke_like(user_id, last_joke_id)
+            # Optionally, remove the key from Redis after liking to prevent multiple likes on same "last" joke?
+            # self.redis.delete(redis_key)
+            logger.info(f"User {user_id} liked joke {last_joke_id}. Logged to Neo4j.")
+            return {'success': True, 'message': '👍 已讚！感謝您的評價。'}
+        except Exception as e:
+            logger.error(f"按讚笑話失敗 for user {user_id}: {e}")
+            # Check if it's a Neo4j specific error from log_joke_like if it re-raises
+            return {'success': False, 'message': '😥 按讚失敗，請稍後再試'}
 
 
 def format_api_stats_message(stats: Dict) -> str:

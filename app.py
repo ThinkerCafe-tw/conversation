@@ -504,6 +504,22 @@ def handle_text_message(event):
         else:
             result = community.start_word_chain(word, user_id)
             reply_message = result['message']
+            # Log Word Chain interaction (start/continue are handled within community.start_word_chain based on logic)
+            if result.get('success', False) and knowledge_graph and knowledge_graph.connected:
+                try:
+                    # Determine interaction type based on reply message content or result structure
+                    interaction = "used" # Default
+                    if '接龍遊戲已開始' in reply_message or '成功加入接龍' in reply_message or "新的一輪文字接龍開始了" in reply_message:
+                         interaction = "started"
+                    elif '成功接龍' in reply_message and '遊戲完成' not in reply_message:
+                         interaction = "continued"
+                    elif '遊戲完成' in reply_message:
+                        interaction = "completed"
+
+                    if interaction != "used" or not ('目前沒有進行中的接龍' in reply_message): # Avoid logging "used" for status checks
+                        knowledge_graph.log_user_feature_interaction(user_id, "接龍", interaction)
+                except Exception as e_kg:
+                    logger.error(f"Neo4j - Error logging 接龍 interaction: {e_kg}")
         
         line_bot_api.reply_message(
             ReplyMessageRequest(
@@ -520,6 +536,22 @@ def handle_text_message(event):
         else:
             result = community.get_word_chain_status()
             reply_message = result['message']
+            # Log Word Chain interaction
+            if result.get('success', False) and knowledge_graph and knowledge_graph.connected:
+                try:
+                    interaction = "used"
+                    if '接龍遊戲已開始' in reply_message or '成功加入接龍' in reply_message or "新的一輪文字接龍開始了" in reply_message:
+                         interaction = "started"
+                    elif ('成功接龍' in reply_message or '下一位請接' in reply_message) and '遊戲完成' not in reply_message:
+                         interaction = "continued"
+                    elif '遊戲完成' in reply_message:
+                        interaction = "completed"
+
+                    # Avoid logging "used" for simple status checks if message indicates no active chain
+                    if not ('目前沒有進行中的接龍' in reply_message and interaction == "used"):
+                        knowledge_graph.log_user_feature_interaction(user_id, "接龍", interaction)
+                except Exception as e_kg:
+                    logger.error(f"Neo4j - Error logging 接龍 interaction: {e_kg}")
         
         line_bot_api.reply_message(
             ReplyMessageRequest(
@@ -539,6 +571,12 @@ def handle_text_message(event):
         else:
             result = {'message': '❌ 格式錯誤！請使用：投票 主題/選項1/選項2/選項3'}
         
+        if result.get('success') and knowledge_graph and knowledge_graph.connected: # Ensure success before logging
+            try:
+                knowledge_graph.log_user_feature_interaction(user_id, "投票", "created_poll")
+            except Exception as e_kg:
+                logger.error(f"Neo4j - Error logging 投票 created_poll interaction: {e_kg}")
+
         line_bot_api.reply_message(
             ReplyMessageRequest(
                 replyToken=event.reply_token,
@@ -572,6 +610,12 @@ def handle_text_message(event):
                 result = {'message': '❌ 容量必須是數字'}
         else:
             result = {'message': '❌ 格式錯誤！請使用：防空 地點 類型 容量'}
+
+        if result.get('success') and knowledge_graph and knowledge_graph.connected: # Ensure success before logging
+            try:
+                knowledge_graph.log_user_feature_interaction(user_id, "防災資訊", "added_shelter")
+            except Exception as e_kg:
+                logger.error(f"Neo4j - Error logging 防災資訊 added_shelter interaction: {e_kg}")
         
         line_bot_api.reply_message(
             ReplyMessageRequest(
@@ -639,6 +683,12 @@ def handle_text_message(event):
     if event.message.text.isdigit():
         option_num = int(event.message.text)
         result = community.cast_vote(option_num, user_id)
+
+        if result.get('success') and knowledge_graph and knowledge_graph.connected: # Ensure success before logging
+            try:
+                knowledge_graph.log_user_feature_interaction(user_id, "投票", "cast_vote")
+            except Exception as e_kg:
+                logger.error(f"Neo4j - Error logging 投票 cast_vote interaction: {e_kg}")
         
         line_bot_api.reply_message(
             ReplyMessageRequest(
@@ -649,19 +699,40 @@ def handle_text_message(event):
         return
     
     # 檢查是否為接龍（如果有進行中的接龍）
-    if community and community.connected and len(event.message.text) >= 2: # Ensure community object exists
-        chain_data = community.redis.get("word_chain:current")
-        if chain_data:
-            result = community.continue_word_chain(event.message.text, user_id)
-            if result['success']:
-                line_bot_api.reply_message(
-                    ReplyMessageRequest(
-                        replyToken=event.reply_token,
-                        messages=[TextMessage(text=result['message'])]
-                    )
-                )
-                return
-    
+    # This block handles implicit continuation by just typing a word.
+    # explicit "接龍 <word>" is handled by the "接龍 " startswith handler.
+    # For implicit, if continue_word_chain is successful, it means user participated.
+    if community and community.connected and len(event.message.text) >= 2 and \
+       not event.message.text.startswith('接龍 ') and \
+       not event.message.text.startswith('投票 ') and \
+       not event.message.text.startswith('防空 ') and \
+       not event.message.text.startswith('笑話 ') and \
+       event.message.text not in ['接龍狀態', '接龍進度', '接龍', '投票結果', '防災資訊', '緊急'] and \
+       text_lower not in QUICK_MENUS and \
+       text_lower not in ['幫助', 'help', '說明', '?'] and \
+       text_lower not in ['廣播', 'broadcast', 'b', '頻率', 'freq'] and \
+       text_lower not in ['統計', 'stats', '進度', 'progress', '排行'] and \
+       text_lower not in ['系統狀態', 'system', 'performance', '效能'] and \
+       text_lower not in ['api統計', 'api stats', 'api'] and \
+       text_lower not in ['說個笑話', '聽笑話'] and \
+       text_lower not in ['讚', '👍', 'like joke', '讚笑話', '推'] and \
+       text_lower not in ['hi', 'hello', '你好', '嗨', '哈囉', '安安'] and \
+       not event.message.text.isdigit() : # Avoid conflict with other command words
+
+        chain_data_str = community.redis.get("word_chain:current")
+        if chain_data_str:
+            # Attempt to continue the chain implicitly
+            potential_word = event.message.text.strip()
+            # Call a modified or existing method that attempts to continue without starting a new one if it fails.
+            # For now, we assume `continue_word_chain` is robust enough or this path is for general messages.
+            # If `continue_word_chain` is called and succeeds, it should log.
+            # The current `community.continue_word_chain` is called from `start_word_chain` if chain exists.
+            # This path is more for "is this a valid continuation if user just types a word?"
+            # For MVP logging, explicit "接龍 <word>" covers active participation.
+            # Logging implicit continuations here might be too broad unless there's a specific check.
+            pass
+
+
     # 笑話功能
     if event.message.text.startswith('笑話 '):
         if community: # Check if community features are available
@@ -669,8 +740,15 @@ def handle_text_message(event):
             if not joke_text:
                 reply_message = "🤔 笑話內容不能為空喔！請輸入「笑話 [你的笑話內容]」"
             else:
-                result = community.add_joke(user_id, joke_text) # user_id is already hashed
+                result = community.add_joke(user_id, joke_text)
                 reply_message = result['message']
+                if result.get('success') and knowledge_graph and knowledge_graph.connected: # Ensure success before logging
+                    try:
+                        knowledge_graph.log_user_feature_interaction(user_id, "笑話", "submitted_joke")
+                    except Exception as e_kg:
+                        logger.error(f"Neo4j - Error logging 笑話 submitted_joke interaction: {e_kg}")
+            else: # joke_text is empty
+                 reply_message = "🤔 笑話內容不能為空喔！請輸入「笑話 [你的笑話內容]」"
         else:
             reply_message = "❌ 社群功能（包含笑話）暫時無法使用"
 
@@ -684,10 +762,37 @@ def handle_text_message(event):
 
     if event.message.text.lower() in ['說個笑話', '聽笑話']:
         if community: # Check if community features are available
-            result = community.get_random_joke()
+            # Pass user_id (which is the hashed user_id) for caching last seen joke
+            result = community.get_random_joke(user_id_for_cache=user_id)
             reply_message = result['message']
+            # Log only if a joke was successfully retrieved AND shown (not just a "no jokes" message)
+            if result.get('success') and result.get('joke') and knowledge_graph and knowledge_graph.connected:
+                try:
+                    knowledge_graph.log_user_feature_interaction(user_id, "笑話", "viewed_joke")
+                except Exception as e_kg:
+                    logger.error(f"Neo4j - Error logging 笑話 viewed_joke interaction: {e_kg}")
         else:
             reply_message = "❌ 社群功能（包含笑話）暫時無法使用"
+
+        line_bot_api.reply_message(
+            ReplyMessageRequest(
+                replyToken=event.reply_token,
+                messages=[TextMessage(text=reply_message)]
+            )
+        )
+        return
+
+    if event.message.text.lower() in ['讚', '👍', 'like joke', '讚笑話', '推']:
+        if community: # Check if community features are available
+            result = community.like_last_joke(user_id)
+            reply_message = result['message']
+            if result.get('success') and knowledge_graph and knowledge_graph.connected: # Ensure success before logging
+                try:
+                    knowledge_graph.log_user_feature_interaction(user_id, "笑話", "liked_joke")
+                except Exception as e_kg:
+                    logger.error(f"Neo4j - Error logging 笑話 liked_joke interaction: {e_kg}")
+        else:
+            reply_message = "❌ 社群功能（包含評價）暫時無法使用"
 
         line_bot_api.reply_message(
             ReplyMessageRequest(

@@ -100,73 +100,86 @@ class TestInteractiveFeatures(unittest.TestCase):
         self.assertEqual(sent_message.text, expected_reply)
 
     # --- Joke Feature Tests (app.py handlers) ---
-    @patch('app.community') # Mock the entire community module/object used in app.py
+    @patch('app.knowledge_graph') # Mock knowledge_graph for interaction logging
+    @patch('app.community')
     @patch('app.line_bot_api.reply_message')
-    def test_submit_joke_success(self, mock_reply_message, mock_community_features):
-        mock_event = self._create_mock_event("笑話 這是一個超好笑的笑話")
+    def test_submit_joke_success(self, mock_reply_message, mock_community_features, mock_kg):
+        user_id = "test_user_submit_joke"
+        mock_event = self._create_mock_event("笑話 這是一個超好笑的笑話", user_id=user_id)
 
+        mock_kg.connected = True # Assume KG is connected
         # Configure the mock for community.add_joke
         mock_community_features.add_joke.return_value = {
             'success': True,
             'message': '😄 你的笑話已成功收錄！感謝分享！'
         }
 
-        handle_text_message(mock_event) # user_id is part of mock_event
+        handle_text_message(mock_event)
 
         mock_community_features.add_joke.assert_called_once_with(
-            "test_user", # This should match the user_id in _create_mock_event
+            user_id,
             "這是一個超好笑的笑話"
         )
         self.assertTrue(mock_reply_message.called)
         args, _ = mock_reply_message.call_args
         reply_request = args[0]
         self.assertEqual(reply_request.messages[0].text, '😄 你的笑話已成功收錄！感謝分享！')
+        mock_kg.log_user_feature_interaction.assert_called_once_with(user_id, "笑話", "submitted_joke")
 
+    @patch('app.knowledge_graph')
     @patch('app.community')
     @patch('app.line_bot_api.reply_message')
-    def test_submit_joke_empty(self, mock_reply_message, mock_community_features):
+    def test_submit_joke_empty(self, mock_reply_message, mock_community_features, mock_kg):
         mock_event = self._create_mock_event("笑話 ") # Empty joke
 
         handle_text_message(mock_event)
 
-        mock_community_features.add_joke.assert_not_called() # Should not be called
+        mock_community_features.add_joke.assert_not_called()
+        mock_kg.log_user_feature_interaction.assert_not_called() # KG log should not be called
         self.assertTrue(mock_reply_message.called)
         args, _ = mock_reply_message.call_args
         reply_request = args[0]
         self.assertEqual(reply_request.messages[0].text, "🤔 笑話內容不能為空喔！請輸入「笑話 [你的笑話內容]」")
 
+    @patch('app.knowledge_graph')
     @patch('app.community')
     @patch('app.line_bot_api.reply_message')
-    def test_get_joke_found(self, mock_reply_message, mock_community_features):
-        mock_event = self._create_mock_event("說個笑話")
+    def test_get_joke_found(self, mock_reply_message, mock_community_features, mock_kg):
+        user_id = "test_user_get_joke"
+        mock_event = self._create_mock_event("說個笑話", user_id=user_id)
 
+        mock_kg.connected = True
         mock_community_features.get_random_joke.return_value = {
             'success': True,
-            'joke': {'text': '有個程式設計師...', 'user': '用戶1234'},
+            'joke': {'id': 'j1', 'text': '有個程式設計師...', 'user': '用戶1234'}, # Ensure 'joke' key is present
             'message': "🗣️ 用戶1234 分享的笑話：\n\n有個程式設計師..."
         }
 
         handle_text_message(mock_event)
 
-        mock_community_features.get_random_joke.assert_called_once()
+        mock_community_features.get_random_joke.assert_called_once_with(user_id_for_cache=user_id)
+        mock_kg.log_user_feature_interaction.assert_called_once_with(user_id, "笑話", "viewed_joke")
         self.assertTrue(mock_reply_message.called)
         args, _ = mock_reply_message.call_args
         reply_request = args[0]
         self.assertEqual(reply_request.messages[0].text, "🗣️ 用戶1234 分享的笑話：\n\n有個程式設計師...")
 
+    @patch('app.knowledge_graph')
     @patch('app.community')
     @patch('app.line_bot_api.reply_message')
-    def test_get_joke_not_found(self, mock_reply_message, mock_community_features):
-        mock_event = self._create_mock_event("聽笑話")
+    def test_get_joke_not_found(self, mock_reply_message, mock_community_features, mock_kg):
+        user_id = "test_user_get_joke_nf"
+        mock_event = self._create_mock_event("聽笑話", user_id=user_id)
 
         mock_community_features.get_random_joke.return_value = {
-            'success': False,
+            'success': False, # Important: success is false
             'message': '目前還沒有笑話，快來輸入「笑話 [內容]」分享一個吧！'
         }
 
         handle_text_message(mock_event)
 
-        mock_community_features.get_random_joke.assert_called_once()
+        mock_community_features.get_random_joke.assert_called_once_with(user_id_for_cache=user_id)
+        mock_kg.log_user_feature_interaction.assert_not_called() # Not called if no joke found
         self.assertTrue(mock_reply_message.called)
         args, _ = mock_reply_message.call_args
         reply_request = args[0]
@@ -181,14 +194,101 @@ class TestInteractiveFeatures(unittest.TestCase):
         args, _ = mock_reply_message.call_args
         self.assertEqual(args[0].messages[0].text, "❌ 社群功能（包含笑話）暫時無法使用")
 
-    @patch('app.community', None) # Simulate community features not available
+    @patch('app.knowledge_graph')
+    @patch('app.community', None)
     @patch('app.line_bot_api.reply_message')
-    def test_get_joke_community_unavailable(self, mock_reply_message):
+    def test_get_joke_community_unavailable(self, mock_reply_message, mock_kg):
         mock_event = self._create_mock_event("說個笑話")
         handle_text_message(mock_event)
         self.assertTrue(mock_reply_message.called)
         args, _ = mock_reply_message.call_args
         self.assertEqual(args[0].messages[0].text, "❌ 社群功能（包含笑話）暫時無法使用")
+        mock_kg.log_user_feature_interaction.assert_not_called()
+
+    @patch('app.knowledge_graph')
+    @patch('app.community')
+    @patch('app.line_bot_api.reply_message')
+    def test_like_joke_success(self, mock_reply_message, mock_community_features, mock_kg):
+        user_id = "test_user_like_joke"
+        mock_event = self._create_mock_event("讚", user_id=user_id)
+
+        mock_kg.connected = True
+        mock_community_features.like_last_joke.return_value = {
+            'success': True,
+            'message': '👍 已讚！感謝您的評價。'
+        }
+        handle_text_message(mock_event)
+
+        mock_community_features.like_last_joke.assert_called_once_with(user_id)
+        self.assertTrue(mock_reply_message.called)
+        args, _ = mock_reply_message.call_args
+        self.assertEqual(args[0].messages[0].text, '👍 已讚！感謝您的評價。')
+        mock_kg.log_user_feature_interaction.assert_called_once_with(user_id, "笑話", "liked_joke")
+
+    # --- Tests for other feature logging ---
+    @patch('app.knowledge_graph')
+    @patch('app.community')
+    @patch('app.line_bot_api.reply_message')
+    def test_start_word_chain_logs_interaction(self, mock_reply_message, mock_community_features, mock_kg):
+        user_id = "user_word_chain"
+        mock_event = self._create_mock_event("接龍 開始詞", user_id=user_id)
+
+        mock_kg.connected = True
+        mock_community_features.start_word_chain.return_value = {
+            'success': True,
+            'message': '🔗 接龍遊戲已開始！請接「詞」' # Example success message
+        }
+        handle_text_message(mock_event)
+        mock_community_features.start_word_chain.assert_called_once_with("開始詞", user_id)
+        mock_kg.log_user_feature_interaction.assert_called_once_with(user_id, "接龍", "started")
+
+    @patch('app.knowledge_graph')
+    @patch('app.community')
+    @patch('app.line_bot_api.reply_message')
+    def test_create_vote_logs_interaction(self, mock_reply_message, mock_community_features, mock_kg):
+        user_id = "user_create_vote"
+        mock_event = self._create_mock_event("投票 主題/選項A/選項B", user_id=user_id)
+
+        mock_kg.connected = True
+        mock_community_features.create_vote.return_value = {
+            'success': True,
+            'message': '📊 投票開始！'
+        }
+        handle_text_message(mock_event)
+        mock_community_features.create_vote.assert_called_once_with("主題", ["選項A", "選項B"], user_id)
+        mock_kg.log_user_feature_interaction.assert_called_once_with(user_id, "投票", "created_poll")
+
+    @patch('app.knowledge_graph')
+    @patch('app.community')
+    @patch('app.line_bot_api.reply_message')
+    def test_cast_vote_logs_interaction(self, mock_reply_message, mock_community_features, mock_kg):
+        user_id = "user_cast_vote"
+        mock_event = self._create_mock_event("1", user_id=user_id) # User votes for option 1
+
+        mock_kg.connected = True
+        mock_community_features.cast_vote.return_value = {
+            'success': True,
+            'message': '✅ 投票成功！'
+        }
+        handle_text_message(mock_event)
+        mock_community_features.cast_vote.assert_called_once_with(1, user_id)
+        mock_kg.log_user_feature_interaction.assert_called_once_with(user_id, "投票", "cast_vote")
+
+    @patch('app.knowledge_graph')
+    @patch('app.community')
+    @patch('app.line_bot_api.reply_message')
+    def test_add_shelter_logs_interaction(self, mock_reply_message, mock_community_features, mock_kg):
+        user_id = "user_add_shelter"
+        mock_event = self._create_mock_event("防空 地點A 型態B 100人", user_id=user_id)
+
+        mock_kg.connected = True
+        mock_community_features.add_shelter_info.return_value = {
+            'success': True,
+            'message': '🏠 避難資訊已記錄'
+        }
+        handle_text_message(mock_event)
+        mock_community_features.add_shelter_info.assert_called_once_with("地點A", "型態B", 100, user_id)
+        mock_kg.log_user_feature_interaction.assert_called_once_with(user_id, "防災資訊", "added_shelter")
 
 
 if __name__ == '__main__':
