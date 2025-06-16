@@ -1,0 +1,467 @@
+{
+  "tasks": [
+    {
+      "id": 1,
+      "title": "設置專案基礎架構與開發環境",
+      "description": "建立專案基礎架構，包括代碼倉庫、CI/CD 流程、開發環境配置，以及設置所需的 GCP 服務",
+      "status": "in-progress",
+      "dependencies": [],
+      "priority": "high",
+      "details": "1. 建立 Git 代碼倉庫，設置分支保護規則和 PR 流程\n2. 配置 Node.js (v18+) 開發環境，使用 TypeScript 作為主要開發語言\n3. 設置 ESLint, Prettier 等代碼質量工具\n4. 在 GCP 上設置以下服務：\n   - Cloud Run 用於部署 API 服務\n   - Memorystore for Redis 用於臨時數據存儲\n   - Cloud Scheduler 用於定時任務\n   - Secret Manager 用於管理 API 密鑰\n5. 設置 GitHub Actions 或 Cloud Build 用於 CI/CD 流程\n6. 建立開發、測試和生產環境的配置文件\n7. 設置日誌記錄系統，使用 Cloud Logging\n8. 建立基本的專案文檔，包括 README, API 文檔等",
+      "testStrategy": "1. 確認所有 GCP 服務能夠正確配置和訪問\n2. 驗證 CI/CD 流程能夠自動部署到開發環境\n3. 確保團隊成員能夠克隆代碼庫並運行開發環境",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Git Repository and Code Quality Setup",
+          "description": "Set up the Git repository structure and implement code quality tools",
+          "dependencies": [],
+          "details": "Create a new Git repository with proper branching strategy (main, development, feature branches). Configure linting tools (ESLint, Prettier) with appropriate rules. Set up pre-commit hooks to enforce code quality. Implement unit test framework and configure code coverage reporting. Create pull request templates and contribution guidelines.",
+          "status": "in-progress"
+        },
+        {
+          "id": 2,
+          "title": "GCP Services Configuration",
+          "description": "Configure necessary Google Cloud Platform services for the project",
+          "dependencies": [
+            1
+          ],
+          "details": "Set up GCP project with appropriate IAM roles and permissions. Configure Cloud Storage buckets for asset storage. Set up Cloud SQL or Firestore for database needs. Configure networking and security settings including VPC and firewall rules. Set up logging and monitoring with Cloud Monitoring and Cloud Logging. Enable required APIs for the project.",
+          "status": "in-progress"
+        },
+        {
+          "id": 3,
+          "title": "CI/CD Pipeline Implementation",
+          "description": "Implement continuous integration and deployment pipeline",
+          "dependencies": [
+            1,
+            2
+          ],
+          "details": "Configure GitHub Actions or Cloud Build for CI/CD. Set up automated testing in the pipeline including unit and integration tests. Implement deployment stages (dev, staging, production). Configure environment-specific variables and secrets management. Set up automated code quality checks in the pipeline. Implement rollback mechanisms for failed deployments.",
+          "status": "in-progress"
+        },
+        {
+          "id": 4,
+          "title": "Documentation and Environment Configuration",
+          "description": "Create comprehensive documentation and finalize environment configurations",
+          "dependencies": [
+            1,
+            2,
+            3
+          ],
+          "details": "Document repository structure and branching strategy. Create setup guides for local development environment. Document CI/CD pipeline workflow and deployment processes. Create infrastructure diagrams for GCP services. Document environment variables and configuration options. Create runbooks for common operational tasks and troubleshooting.",
+          "status": "in-progress"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "實現 LINE Bot 整合與訊息接收",
+      "description": "開發 LINE Bot 的基本功能，包括接收群組訊息、處理 Webhook 事件，以及實現基本的群組加入/離開處理",
+      "status": "in-progress",
+      "dependencies": [
+        1
+      ],
+      "priority": "high",
+      "details": "1. 在 LINE Developers 平台創建一個新的 Messaging API Channel\n2. 使用 @line/bot-sdk (最新版本，目前是 v7.5.2) 實現 Webhook 接收器\n3. 設置 LINE Bot 的基本配置，包括頻道訪問令牌和頻道密鑰\n4. 實現以下 Webhook 事件處理：\n   - 文本消息事件 (message.text)\n   - 加入群組事件 (join)\n   - 離開群組事件 (leave)\n5. 設計群組管理數據結構，用於跟踪 Bot 已加入的群組\n6. 實現基本的錯誤處理和日誌記錄\n7. 確保 Webhook URL 通過 HTTPS 訪問\n8. 使用 ngrok 提供臨時 Webhook URL (43d6-122-118-210-93.ngrok-free.app) 進行開發測試\n\n代碼示例：\n```typescript\nimport { Client, middleware, WebhookEvent, TextMessage } from '@line/bot-sdk';\nimport express from 'express';\n\nconst config = {\n  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN!,\n  channelSecret: process.env.LINE_CHANNEL_SECRET!\n};\n\nconst client = new Client(config);\nconst app = express();\n\napp.post('/webhook', middleware(config), async (req, res) => {\n  try {\n    await Promise.all(req.body.events.map(handleEvent));\n    res.status(200).end();\n  } catch (err) {\n    console.error(err);\n    res.status(500).end();\n  }\n});\n\nasync function handleEvent(event: WebhookEvent) {\n  if (event.type === 'message' && event.message.type === 'text') {\n    // 處理文本消息\n    await processGroupMessage(event);\n  } else if (event.type === 'join') {\n    // 處理加入群組事件\n    await handleJoinEvent(event);\n  } else if (event.type === 'leave') {\n    // 處理離開群組事件\n    await handleLeaveEvent(event);\n  }\n}\n```",
+      "testStrategy": "1. 使用 LINE 的 Webhook 測試工具驗證 Webhook 端點\n2. 創建測試群組，將 Bot 添加到群組中，確認加入事件被正確處理\n3. 在測試群組中發送消息，確認消息被正確接收\n4. 模擬 Bot 被移出群組，確認離開事件被正確處理\n5. 使用單元測試模擬 LINE Webhook 事件\n6. 測試 ngrok 臨時 URL 的連接性，確保 LINE 平台能正確發送事件到本地開發環境\n7. 驗證 X-Line-Signature 驗證機制是否正常運作",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "LINE Bot Channel Setup and Configuration",
+          "description": "Create a LINE Developer account, register a new provider, and set up a Messaging API channel for the bot.",
+          "dependencies": [],
+          "details": "1. Create a LINE Developer account\n2. Register a new provider\n3. Create a Messaging API channel\n4. Configure basic settings (display name, profile image, etc.)\n5. Generate and securely store the Channel Secret and Channel Access Token\n6. Configure the LINE Bot basic response settings",
+          "status": "in-progress"
+        },
+        {
+          "id": 2,
+          "title": "Webhook Implementation for Message Events",
+          "description": "Implement webhook endpoints to receive and process message events from LINE platform.",
+          "dependencies": [
+            1
+          ],
+          "details": "1. Create webhook endpoint in the application\n2. Implement signature validation for LINE requests\n3. Set up event parsing for different message types (text, image, etc.)\n4. Implement basic message response handlers\n5. Configure webhook URL in LINE Developer Console\n6. Test webhook connectivity and message event handling\n7. Ensure X-Line-Signature validation is working correctly",
+          "status": "done"
+        },
+        {
+          "id": 3,
+          "title": "Group Management Event Handling",
+          "description": "Implement handlers for group-related events such as bot joining/leaving groups and members joining/leaving.",
+          "dependencies": [
+            2
+          ],
+          "details": "1. Implement event handlers for bot join/leave group events\n2. Create logic for member join/leave events in groups\n3. Develop welcome messages for new group joins\n4. Implement group-specific data storage\n5. Test group event handling in real LINE groups\n6. Add error handling for group-related operations",
+          "status": "in-progress"
+        },
+        {
+          "id": 4,
+          "title": "Ngrok Setup for Development Webhook",
+          "description": "Configure ngrok for local development to expose the webhook endpoint to LINE platform.",
+          "dependencies": [
+            1
+          ],
+          "details": "1. Install and configure ngrok\n2. Start ngrok with the command to expose the local webhook port\n3. Use the current temporary URL: 144c-122-118-210-93.ngrok-free.app\n4. Update the Webhook URL in LINE Developers Console to https://144c-122-118-210-93.ngrok-free.app/webhook\n5. Implement solutions for ngrok free tier browser warnings:\n   - Add custom HTTP header 'ngrok-skip-browser-warning'\n   - Configure custom User-Agent for requests\n6. Document the process of updating the Webhook URL when ngrok restarts\n7. Consider upgrading to paid ngrok account for more stable development\n8. Ensure the /webhook route correctly handles LINE platform events",
+          "status": "done"
+        },
+        {
+          "id": 5,
+          "title": "Webhook URL Management Process",
+          "description": "Create a process for managing the changing ngrok URLs during development.",
+          "dependencies": [
+            4
+          ],
+          "details": "1. Document the steps to update the Webhook URL in LINE Developers Console\n2. Create a checklist for developers to follow when restarting ngrok\n3. Implement a quick verification test after URL updates\n4. Consider creating a script to automate the update process if possible\n5. Document common issues and troubleshooting steps related to webhook URL changes\n6. Test the complete process to ensure it's reliable",
+          "status": "in-progress"
+        },
+        {
+          "id": 6,
+          "title": "Update Webhook URL to New ngrok Endpoint",
+          "description": "Update the webhook URL in LINE Developers Console to the new ngrok URL and verify connectivity.",
+          "dependencies": [
+            4
+          ],
+          "details": "1. Update the Webhook URL in LINE Developers Console to https://43d6-122-118-210-93.ngrok-free.app/webhook\n2. Verify the webhook endpoint is receiving events from LINE platform\n3. Update any documentation or configuration files with the new URL\n4. Test the webhook connectivity with LINE's verification tool\n5. Ensure all event types are being properly received and processed",
+          "status": "done"
+        },
+        {
+          "id": 7,
+          "title": "Investigate Permanent Webhook Solution",
+          "description": "Research and propose more permanent alternatives to ngrok for webhook hosting in production.",
+          "dependencies": [
+            5
+          ],
+          "details": "1. Research cloud-based webhook hosting options (AWS, GCP, Azure, etc.)\n2. Compare costs and benefits of different hosting solutions\n3. Consider serverless options like AWS Lambda or Google Cloud Functions\n4. Evaluate domain name requirements and SSL certificate management\n5. Create a proposal document with recommendations\n6. Outline implementation steps for the selected solution\n7. Consider CI/CD integration for automated webhook URL updates",
+          "status": "in-progress"
+        },
+        {
+          "id": 8,
+          "title": "Develop Automated Webhook URL Update Script",
+          "description": "Create a script to automatically update the LINE Webhook URL when ngrok generates a new endpoint.",
+          "details": "1. Use LINE Bot SDK to programmatically update webhook URL\n2. Create a script that:\n   - Retrieves current ngrok URL\n   - Validates the new URL\n   - Updates LINE Developers Console webhook endpoint\n3. Implement error handling and logging\n4. Add support for multiple environments (dev, staging, prod)\n5. Create documentation for the update process\n6. Add unit and integration tests for the update mechanism",
+          "status": "in-progress",
+          "dependencies": [],
+          "parentTaskId": 2
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "實現用戶匿名化模組",
+      "description": "開發用戶匿名化系統，將用戶的真實 LINE userId 轉換為臨時假名，並確保映射關係在摘要週期結束後自動銷毀",
+      "status": "in-progress",
+      "dependencies": [
+        1,
+        2
+      ],
+      "priority": "high",
+      "details": "1. 使用 Redis 作為臨時存儲，設置 Hash 數據結構用於存儲 userId 到假名的映射\n2. 使用 ioredis (v5.3.2+) 作為 Redis 客戶端\n3. 實現匿名化函數，將真實 userId 轉換為形如「使用者A」、「使用者B」的假名\n4. 為每個群組創建獨立的命名空間，確保不同群組的假名不會混淆\n5. 設置 Redis 鍵的 TTL 為 70 分鐘，確保映射關係自動過期\n6. 實現獲取假名的函數，如果 userId 已有假名則返回現有假名，否則創建新假名\n7. 確保匿名化過程是幂等的，同一用戶在同一摘要週期內始終獲得相同假名\n\n代碼示例：\n```typescript\nimport Redis from 'ioredis';\n\nconst redis = new Redis(process.env.REDIS_URL);\n\nasync function anonymizeUser(groupId: string, userId: string): Promise<string> {\n  const key = `group:${groupId}:users`;\n  \n  // 檢查用戶是否已有假名\n  let pseudonym = await redis.hget(key, userId);\n  \n  if (!pseudonym) {\n    // 獲取當前群組的用戶數量\n    const userCount = await redis.hlen(key);\n    // 創建新假名\n    pseudonym = `使用者${String.fromCharCode(65 + userCount)}`;\n    // 存儲映射關係\n    await redis.hset(key, userId, pseudonym);\n    // 設置 70 分鐘 TTL\n    await redis.expire(key, 70 * 60);\n  }\n  \n  return pseudonym;\n}\n```",
+      "testStrategy": "1. 單元測試：確保同一用戶在同一週期內獲得相同假名\n2. 單元測試：確保不同用戶獲得不同假名\n3. 集成測試：確認 Redis TTL 設置正確，映射關係在 70 分鐘後自動過期\n4. 壓力測試：模擬大量用戶同時發送消息，確保匿名化系統能夠處理高並發\n5. 安全測試：確保無法從假名反向推導出真實 userId",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Redis Configuration for User Mapping Storage",
+          "description": "Set up and configure Redis for storing user-to-pseudonym mappings",
+          "dependencies": [],
+          "details": "Configure Redis client connection with appropriate error handling. Design the key structure for user mappings (e.g., 'user:{userId}:pseudonym'). Implement connection pooling for efficient Redis access. Add configuration parameters for Redis connection (host, port, password) in the application config. Include fallback mechanisms in case of Redis connection failures.",
+          "status": "in-progress"
+        },
+        {
+          "id": 2,
+          "title": "Pseudonym Generation and Retrieval Logic",
+          "description": "Implement the core logic for generating consistent pseudonyms and retrieving existing ones",
+          "dependencies": [
+            1
+          ],
+          "details": "Create a service that checks if a user already has a pseudonym in Redis before generating a new one. Implement a deterministic pseudonym generation algorithm that produces human-readable yet anonymous identifiers. Ensure thread-safety for concurrent pseudonym requests. Add caching layer to minimize Redis calls for frequently accessed pseudonyms. Implement batch operations for handling multiple pseudonym requests efficiently.",
+          "status": "in-progress"
+        },
+        {
+          "id": 3,
+          "title": "TTL Implementation for Data Lifecycle Management",
+          "description": "Implement time-to-live (TTL) functionality for pseudonym mappings",
+          "dependencies": [
+            1,
+            2
+          ],
+          "details": "Configure Redis TTL settings for user mapping entries based on the specified time window. Implement logic to reset TTL when a mapping is accessed within its lifetime. Create a background job to periodically clean up expired mappings. Add monitoring for TTL-related metrics (e.g., expiration rate, recreation rate). Implement configurable TTL durations that can be adjusted based on application requirements.",
+          "status": "in-progress"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "實現對話暫存系統",
+      "description": "開發對話暫存系統，按時間順序暫時儲存過去一小時內經過匿名化處理的對話紀錄",
+      "status": "in-progress",
+      "dependencies": [
+        1,
+        3
+      ],
+      "priority": "high",
+      "details": "1. 使用 Redis Sorted Set 作為時間序列數據存儲，以時間戳作為分數\n2. 為每個群組創建獨立的 Sorted Set，用於存儲該群組的對話記錄\n3. 每條消息存儲為 JSON 字符串，包含假名、時間戳和文本內容\n4. 設置 Redis 鍵的 TTL 為 70 分鐘，確保歷史消息自動過期\n5. 實現獲取指定時間範圍內消息的函數\n6. 確保消息存儲過程是原子的，避免數據不一致\n\n代碼示例：\n```typescript\nasync function storeMessage(groupId: string, pseudonym: string, text: string): Promise<void> {\n  const key = `group:${groupId}:messages`;\n  const timestamp = Date.now();\n  const message = JSON.stringify({\n    pseudonym,\n    timestamp,\n    text\n  });\n  \n  // 將消息添加到 Sorted Set\n  await redis.zadd(key, timestamp, message);\n  // 設置 70 分鐘 TTL\n  await redis.expire(key, 70 * 60);\n}\n\nasync function getMessagesInTimeRange(groupId: string, startTime: number, endTime: number): Promise<any[]> {\n  const key = `group:${groupId}:messages`;\n  \n  // 獲取指定時間範圍內的消息\n  const messages = await redis.zrangebyscore(key, startTime, endTime);\n  \n  // 解析 JSON 字符串\n  return messages.map(msg => JSON.parse(msg));\n}\n```",
+      "testStrategy": "1. 單元測試：確保消息按時間順序正確存儲\n2. 單元測試：確保能夠正確獲取指定時間範圍內的消息\n3. 集成測試：確認 Redis TTL 設置正確，歷史消息在 70 分鐘後自動過期\n4. 性能測試：測試系統在高頻消息情況下的性能\n5. 容量測試：評估 Redis 存儲大量消息的容量限制",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Implement Redis Sorted Set for time-series message storage",
+          "description": "Create the Redis Sorted Set data structure to efficiently store chat messages with timestamps as scores for time-based operations.",
+          "dependencies": [],
+          "details": "Implement a Redis Sorted Set structure where each message is stored with its timestamp as the score. Configure appropriate key naming conventions for different chat rooms. Set up automatic expiration policies to manage data retention based on configurable time periods. Include error handling for Redis connection issues.",
+          "status": "in-progress"
+        },
+        {
+          "id": 2,
+          "title": "Develop message formatting and storage functions",
+          "description": "Create functions to format chat messages with metadata and store them in the Redis Sorted Set with proper timestamps.",
+          "dependencies": [
+            1
+          ],
+          "details": "Implement functions to format messages with sender information, timestamp, and content. Create storage functions that add messages to the appropriate Redis Sorted Set with the timestamp as score. Include validation for message format and content. Implement batch operations for efficient handling of multiple messages. Add logging for storage operations.",
+          "status": "in-progress"
+        },
+        {
+          "id": 3,
+          "title": "Implement message retrieval by time range functionality",
+          "description": "Create functions to retrieve messages from Redis Sorted Sets based on specified time ranges with pagination support.",
+          "dependencies": [
+            1,
+            2
+          ],
+          "details": "Develop functions to query messages using Redis ZRANGEBYSCORE commands with time range parameters. Implement pagination for large result sets. Create utility functions for common time range queries (last hour, last day, etc.). Add performance optimization for frequent time range queries. Include proper error handling and response formatting for the retrieved messages.",
+          "status": "in-progress"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "實現定時觸發系統",
+      "description": "開發定時觸發系統，在每個小時的整點自動觸發摘要任務",
+      "status": "in-progress",
+      "dependencies": [
+        1
+      ],
+      "priority": "medium",
+      "details": "1. 使用 Google Cloud Scheduler 設置定時任務，每小時觸發一次\n2. 創建一個安全的 API 端點，用於接收 Cloud Scheduler 的觸發請求\n3. 實現身份驗證機制，確保只有授權的 Cloud Scheduler 可以觸發任務\n4. 設計任務隊列系統，避免同時處理過多摘要任務導致系統過載\n5. 實現錯誤處理和重試機制\n\n配置示例：\n```yaml\n# Cloud Scheduler 配置\nname: hourly-summary-trigger\ndescription: \"Triggers hourly summary generation\"\nschedule: \"0 * * * *\"  # 每小時整點觸發\ntimeZone: \"Asia/Taipei\"\ntarget:\n  httpTarget:\n    uri: \"https://your-service-url/api/trigger-summary\"\n    httpMethod: POST\n    headers:\n      Content-Type: application/json\n    body: base64encoded({\"auth_token\": \"your-secret-token\"})\n```\n\n代碼示例：\n```typescript\nimport express from 'express';\n\nconst app = express();\n\napp.post('/api/trigger-summary', async (req, res) => {\n  try {\n    // 驗證請求\n    if (req.body.auth_token !== process.env.SCHEDULER_AUTH_TOKEN) {\n      return res.status(401).json({ error: 'Unauthorized' });\n    }\n    \n    // 獲取所有活躍群組\n    const activeGroups = await getActiveGroups();\n    \n    // 將摘要任務添加到隊列\n    for (const groupId of activeGroups) {\n      await enqueueTask('generate-summary', { groupId });\n    }\n    \n    res.status(200).json({ success: true });\n  } catch (err) {\n    console.error('Error triggering summary:', err);\n    res.status(500).json({ error: 'Internal server error' });\n  }\n});\n```",
+      "testStrategy": "1. 單元測試：確保 API 端點正確驗證請求\n2. 集成測試：確認 Cloud Scheduler 能夠成功觸發任務\n3. 模擬測試：模擬不同時區的整點時間，確保任務在正確的時間觸發\n4. 負載測試：評估系統同時處理多個群組摘要任務的能力\n5. 故障恢復測試：模擬任務失敗場景，確保重試機制正常工作",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Configure Cloud Scheduler and Secure Endpoint",
+          "description": "Set up Google Cloud Scheduler to trigger the summary generation process at regular intervals and implement a secure API endpoint that only accepts authenticated requests.",
+          "dependencies": [],
+          "details": "1. Create a Cloud Scheduler job with appropriate frequency (e.g., daily or hourly)\n2. Configure the scheduler to call a secure HTTP endpoint\n3. Implement authentication using service accounts or API keys\n4. Set up proper IAM roles and permissions\n5. Test the endpoint security with authorized and unauthorized requests\n6. Document the configuration and security measures",
+          "status": "in-progress"
+        },
+        {
+          "id": 2,
+          "title": "Implement Task Queue for Summary Generation Jobs",
+          "description": "Develop a task queue system to manage summary generation jobs, ensuring the system can handle multiple requests without overloading.",
+          "dependencies": [
+            1
+          ],
+          "details": "1. Choose an appropriate queue technology (Cloud Tasks, Pub/Sub, etc.)\n2. Implement job submission logic from the scheduler endpoint\n3. Create worker processes to consume tasks from the queue\n4. Add rate limiting and throttling mechanisms\n5. Implement error handling and retry logic\n6. Add monitoring and logging for queue performance\n7. Test the queue under various load conditions",
+          "status": "in-progress"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "整合 Google Gemini API 實現 AI 摘要生成",
+      "description": "開發 AI 摘要生成模組，將匿名化對話紀錄發送給 Google Gemini API，生成對話重點摘要",
+      "status": "in-progress",
+      "dependencies": [
+        3,
+        4
+      ],
+      "priority": "high",
+      "details": "1. 使用 Google Generative AI Node.js 客戶端 (@google/generative-ai v0.1.3+) 與 Gemini API 進行集成\n2. 設計有效的提示詞 (Prompt)，指導 AI 生成條列式摘要\n3. 實現對話歷史格式化函數，將匿名化對話轉換為 Gemini API 可接受的格式\n4. 設置適當的模型參數，如溫度 (temperature)、最大輸出長度等\n5. 實現錯誤處理和重試機制，處理 API 限流或暫時不可用的情況\n6. 確保摘要內容符合隱私保護要求\n\n提示詞示例：\n```\n你是一個專業的會議記錄員，負責為 LINE 群組對話生成簡潔的摘要。\n\n請根據以下匿名化的對話記錄，生成一個條列式的重點摘要。摘要應該：\n1. 包含 3-5 個最重要的討論點或決定\n2. 使用中性、客觀的語言\n3. 不要猜測或還原用戶的真實身份\n4. 長度控制在 50-100 字之間\n5. 使用繁體中文\n\n對話記錄：\n{{anonymized_conversation}}\n\n請直接給出摘要，不要加入額外的解釋或前言。\n```\n\n代碼示例：\n```typescript\nimport { GoogleGenerativeAI } from '@google/generative-ai';\n\nconst genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);\n\nasync function generateSummary(conversationHistory: any[]): Promise<string> {\n  try {\n    // 格式化對話歷史\n    const formattedConversation = conversationHistory.map(msg => \n      `${msg.pseudonym} (${new Date(msg.timestamp).toLocaleTimeString()}): ${msg.text}`\n    ).join('\\n');\n    \n    // 構建提示詞\n    const prompt = `你是一個專業的會議記錄員，負責為 LINE 群組對話生成簡潔的摘要。\n\n請根據以下匿名化的對話記錄，生成一個條列式的重點摘要。摘要應該：\n1. 包含 3-5 個最重要的討論點或決定\n2. 使用中性、客觀的語言\n3. 不要猜測或還原用戶的真實身份\n4. 長度控制在 50-100 字之間\n5. 使用繁體中文\n\n對話記錄：\n${formattedConversation}\n\n請直接給出摘要，不要加入額外的解釋或前言。`;\n    \n    // 調用 Gemini API\n    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });\n    const result = await model.generateContent({\n      contents: [{ role: 'user', parts: [{ text: prompt }] }],\n      generationConfig: {\n        temperature: 0.2,\n        maxOutputTokens: 200,\n      }\n    });\n    \n    return result.response.text();\n  } catch (error) {\n    console.error('Error generating summary:', error);\n    throw error;\n  }\n}\n```",
+      "testStrategy": "1. 單元測試：使用模擬對話數據測試摘要生成\n2. 集成測試：確認與 Gemini API 的集成正常工作\n3. 質量評估：人工評估摘要的準確性、相關性和可讀性\n4. 性能測試：評估不同長度對話的摘要生成時間\n5. 錯誤處理測試：模擬 API 錯誤場景，確保系統能夠適當處理\n6. 隱私測試：確保摘要不包含可能洩漏用戶身份的信息",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Gemini API Integration Setup",
+          "description": "Configure and implement the Gemini API integration for the application",
+          "dependencies": [],
+          "details": "Set up API authentication, establish connection to Gemini API, configure API keys and environment variables, implement basic API calls, and test connectivity. Document API rate limits and usage quotas for the team.",
+          "status": "in-progress"
+        },
+        {
+          "id": 2,
+          "title": "Prompt Engineering and Optimization",
+          "description": "Develop and refine prompts for optimal AI response quality",
+          "dependencies": [
+            1
+          ],
+          "details": "Create initial prompt templates, implement A/B testing framework for prompt comparison, analyze response quality metrics, iteratively refine prompts based on results, and document best practices for prompt construction specific to summarization tasks.",
+          "status": "in-progress"
+        },
+        {
+          "id": 3,
+          "title": "Conversation Formatting for AI Processing",
+          "description": "Implement conversation data formatting for effective AI processing",
+          "dependencies": [
+            1,
+            2
+          ],
+          "details": "Design data structures for conversation representation, implement preprocessing of conversation data, handle special formatting requirements (code blocks, lists, etc.), ensure proper context window management, and create utilities for conversation chunking if needed.",
+          "status": "in-progress"
+        },
+        {
+          "id": 4,
+          "title": "Error Handling and Retry Mechanisms",
+          "description": "Develop robust error handling and retry logic for API interactions",
+          "dependencies": [
+            1,
+            3
+          ],
+          "details": "Implement comprehensive error detection for API calls, create exponential backoff retry mechanism, handle rate limiting gracefully, develop fallback strategies for API failures, log errors for monitoring, and implement user-facing error messages for transparency.",
+          "status": "in-progress"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "實現摘要發送功能",
+      "description": "開發摘要發送模組，將 AI 生成的摘要文本以公開訊息的形式發送回原本的 LINE 群組",
+      "status": "in-progress",
+      "dependencies": [
+        2,
+        6
+      ],
+      "priority": "medium",
+      "details": "1. 使用 LINE Messaging API 的 pushMessage 方法發送摘要\n2. 設計摘要消息的格式，包括標題、時間範圍和內容\n3. 實現錯誤處理和重試機制，處理消息發送失敗的情況\n4. 添加消息發送記錄，用於監控和調試\n\n代碼示例：\n```typescript\nimport { Client } from '@line/bot-sdk';\n\nconst client = new Client({\n  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN!,\n  channelSecret: process.env.LINE_CHANNEL_SECRET!\n});\n\nasync function sendSummary(groupId: string, summary: string): Promise<void> {\n  try {\n    const now = new Date();\n    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);\n    \n    const timeRangeText = `${oneHourAgo.getHours()}:00 - ${now.getHours()}:00`;\n    const messageText = `📋 過去一小時 (${timeRangeText}) 的對話摘要：\\n\\n${summary}`;\n    \n    await client.pushMessage(groupId, {\n      type: 'text',\n      text: messageText\n    });\n    \n    console.log(`Summary sent to group ${groupId}`);\n  } catch (error) {\n    console.error(`Error sending summary to group ${groupId}:`, error);\n    \n    // 如果是可重試的錯誤，添加到重試隊列\n    if (isRetryableError(error)) {\n      await enqueueRetry('send-summary', { groupId, summary });\n    }\n    \n    throw error;\n  }\n}\n\nfunction isRetryableError(error: any): boolean {\n  // 判斷錯誤是否可重試\n  return error.statusCode >= 500 || error.code === 'ETIMEDOUT';\n}\n```",
+      "testStrategy": "1. 單元測試：確保消息格式正確\n2. 集成測試：確認與 LINE API 的集成正常工作\n3. 端到端測試：在測試群組中驗證摘要發送\n4. 錯誤處理測試：模擬消息發送失敗場景，確保重試機制正常工作\n5. 用戶體驗測試：評估摘要在不同設備上的顯示效果",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Implement LINE message formatting and sending",
+          "description": "Develop the functionality to format and send messages back to LINE groups based on the processed data.",
+          "dependencies": [],
+          "details": "Create a module that handles message formatting according to LINE's requirements. Implement functions to construct different message types (text, rich media, flex messages) as needed. Develop the core sending functionality that interfaces with LINE's Messaging API to deliver messages to the appropriate groups. Include proper logging of all sent messages for audit purposes.",
+          "status": "in-progress"
+        },
+        {
+          "id": 2,
+          "title": "Implement error handling and retry mechanism",
+          "description": "Develop robust error handling and a retry system for failed message deliveries to ensure reliability.",
+          "dependencies": [
+            1
+          ],
+          "details": "Create an error classification system to categorize different types of failures (network issues, rate limiting, invalid tokens, etc.). Implement an exponential backoff retry mechanism for transient errors. Develop a persistent queue for failed messages that need manual intervention. Add comprehensive logging and monitoring to track delivery success rates and identify patterns in failures. Create alerts for critical failure scenarios that require immediate attention.",
+          "status": "in-progress"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "實現完整的端到端流程",
+      "description": "整合所有模組，實現從接收消息到生成摘要再到發送摘要的完整流程",
+      "status": "in-progress",
+      "dependencies": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "priority": "high",
+      "details": "1. 設計主要的業務邏輯流程，將各個模組整合在一起\n2. 實現消息處理流程：接收 -> 匿名化 -> 存儲\n3. 實現摘要生成流程：觸發 -> 獲取歷史 -> 生成摘要 -> 發送\n4. 添加全局錯誤處理和日誌記錄\n5. 實現系統狀態監控\n\n代碼示例：\n```typescript\n// 消息處理流程\nasync function processGroupMessage(event: MessageEvent) {\n  try {\n    const groupId = event.source.groupId!;\n    const userId = event.source.userId!;\n    const text = event.message.text;\n    \n    // 匿名化用戶\n    const pseudonym = await anonymizeUser(groupId, userId);\n    \n    // 存儲消息\n    await storeMessage(groupId, pseudonym, text);\n    \n    console.log(`Message from ${pseudonym} in group ${groupId} processed`);\n  } catch (error) {\n    console.error('Error processing message:', error);\n  }\n}\n\n// 摘要生成流程\nasync function generateAndSendSummary(groupId: string) {\n  try {\n    // 獲取過去一小時的消息\n    const endTime = Date.now();\n    const startTime = endTime - 60 * 60 * 1000;\n    const messages = await getMessagesInTimeRange(groupId, startTime, endTime);\n    \n    // 如果沒有消息，跳過摘要生成\n    if (messages.length === 0) {\n      console.log(`No messages in group ${groupId} in the past hour, skipping summary`);\n      return;\n    }\n    \n    // 生成摘要\n    const summary = await generateSummary(messages);\n    \n    // 發送摘要\n    await sendSummary(groupId, summary);\n    \n    console.log(`Summary for group ${groupId} generated and sent`);\n  } catch (error) {\n    console.error(`Error generating and sending summary for group ${groupId}:`, error);\n  }\n}\n```",
+      "testStrategy": "1. 集成測試：驗證完整流程的正確性\n2. 端到端測試：在測試環境中模擬真實用戶場景\n3. 負載測試：評估系統在高負載下的性能\n4. 故障恢復測試：模擬各種故障場景，確保系統能夠恢復\n5. 用戶體驗測試：評估整體用戶體驗",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Message Processing Pipeline Integration",
+          "description": "Integrate the message processing pipeline with the existing system components to ensure proper data flow.",
+          "dependencies": [],
+          "details": "Implement the message processing pipeline that connects the message reception, validation, and routing components. Ensure messages flow correctly between components with proper state management. Include queue management for handling message backlogs and implement retry mechanisms for failed message processing. Test the pipeline with various message types and volumes to verify performance and reliability.",
+          "status": "in-progress"
+        },
+        {
+          "id": 2,
+          "title": "Summary Generation Workflow Implementation",
+          "description": "Develop and integrate the workflow for generating conversation summaries from processed messages.",
+          "dependencies": [
+            1
+          ],
+          "details": "Create the summary generation workflow that processes conversation data, applies NLP techniques to extract key information, and generates concise summaries. Implement scheduling for periodic summary generation and ensure summaries are stored properly. Add configuration options for summary frequency, detail level, and format. Test the workflow with various conversation types to ensure accurate and useful summaries.",
+          "status": "in-progress"
+        },
+        {
+          "id": 3,
+          "title": "System-wide Error Handling and Logging",
+          "description": "Implement comprehensive error handling and logging mechanisms across all system components.",
+          "dependencies": [
+            1,
+            2
+          ],
+          "details": "Develop a unified error handling strategy that captures, categorizes, and responds to errors appropriately across all system components. Implement structured logging with different severity levels and contextual information. Create a centralized logging system that aggregates logs from all components for easier debugging and monitoring. Implement alerting for critical errors and develop a dashboard for visualizing system health and error patterns.",
+          "status": "in-progress"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "實現監控與日誌系統",
+      "description": "開發監控與日誌系統，用於追蹤系統性能、錯誤和用戶行為",
+      "status": "in-progress",
+      "dependencies": [
+        8
+      ],
+      "priority": "medium",
+      "details": "1. 使用 Google Cloud Monitoring 設置系統監控\n2. 設計結構化日誌格式，包含關鍵信息但不包含敏感數據\n3. 實現關鍵指標的收集和報告，如：\n   - 每小時處理的消息數量\n   - 摘要生成時間\n   - API 調用成功率\n   - 錯誤率和類型\n4. 設置告警機制，在關鍵指標超出閾值時通知團隊\n5. 實現簡單的管理 API，用於查詢系統狀態\n\n監控指標示例：\n```typescript\nimport { Monitoring } from '@google-cloud/monitoring';\n\nconst monitoring = new Monitoring.MetricServiceClient();\n\nasync function recordMetric(metricType: string, value: number, labels: Record<string, string> = {}) {\n  const projectId = process.env.GCP_PROJECT_ID!;\n  const metricPath = monitoring.projectMetricDescriptorPath(projectId, metricType);\n  \n  const dataPoint = {\n    interval: {\n      endTime: {\n        seconds: Math.floor(Date.now() / 1000)\n      }\n    },\n    value: {\n      doubleValue: value\n    }\n  };\n  \n  const timeSeriesData = {\n    metric: {\n      type: metricPath,\n      labels: labels\n    },\n    resource: {\n      type: 'global',\n      labels: {\n        project_id: projectId\n      }\n    },\n    points: [dataPoint]\n  };\n  \n  await monitoring.createTimeSeries({\n    name: monitoring.projectPath(projectId),\n    timeSeries: [timeSeriesData]\n  });\n}\n\n// 使用示例\nasync function trackSummaryGeneration(groupId: string, durationMs: number, messageCount: number) {\n  await recordMetric('custom.googleapis.com/sentry/summary_generation_time', durationMs, { groupId });\n  await recordMetric('custom.googleapis.com/sentry/message_count', messageCount, { groupId });\n}\n```",
+      "testStrategy": "1. 單元測試：確保指標收集正確\n2. 集成測試：確認與 Cloud Monitoring 的集成正常工作\n3. 負載測試：評估監控系統在高負載下的性能\n4. 告警測試：模擬異常情況，確保告警機制正常工作\n5. 日誌審計：確保日誌不包含敏感信息",
+      "subtasks": [
+        {
+          "id": 1,
+          "title": "Cloud Monitoring Setup and Metric Definition",
+          "description": "Configure Cloud Monitoring for the API platform and define key performance metrics to track",
+          "dependencies": [],
+          "details": "Set up Cloud Monitoring for the API platform, identify and define critical metrics for tracking API performance (latency, throughput, error rates), create custom metrics for business-specific KPIs, and implement metric collection agents or exporters as needed. Document the monitoring architecture and metric definitions for the team.",
+          "status": "in-progress"
+        },
+        {
+          "id": 2,
+          "title": "Structured Logging Implementation",
+          "description": "Implement structured logging across the API platform with appropriate data masking",
+          "dependencies": [
+            1
+          ],
+          "details": "Design and implement a structured logging framework that captures relevant operational data while masking sensitive information. Include correlation IDs for request tracing, standardize log levels and formats, implement data redaction for PII/sensitive data, and integrate with Cloud Logging. Create logging documentation and best practices for developers.",
+          "status": "in-progress"
+        },
+        {
+          "id": 3,
+          "title": "Alert Configuration and Management API",
+          "description": "Develop alert policies and create a management API for alert configuration",
+          "dependencies": [
+            1,
+            2
+          ],
+          "details": "Define alert thresholds and policies based on established metrics, implement notification channels (email, SMS, PagerDuty), develop a management API to programmatically configure and update alert settings, implement alert suppression mechanisms to prevent alert storms, and create runbooks for common alert scenarios. Test the complete alerting pipeline.",
+          "status": "in-progress"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "實施安全與隱私保護措施",
+      "description": "實施全面的安全與隱私保護措施，確保系統符合「隱私優先」原則",
+      "status": "in-progress",
+      "dependencies": [
+        3,
+        4,
+        8
+      ],
+      "priority": "high",
+      "details": "1. 實施數據生命週期管理，確保臨時數據按計劃自動刪除\n2. 使用 Google Secret Manager 安全存儲所有 API 密鑰和敏感配置\n3. 實施 API 端點的身份驗證和授權\n4. 設置 Redis 訪問控制和加密\n5. 實施 HTTPS 和 TLS 1.3 用於所有外部通信\n6. 進行代碼安全審計，識別和修復潛在的安全漏洞\n7. 實施速率限制，防止濫用\n8. 建立安全事件響應流程\n\n安全配置示例：\n```typescript\nimport { SecretManagerServiceClient } from '@google-cloud/secret-manager';\nimport express from 'express';\nimport rateLimit from 'express-rate-limit';\nimport helmet from 'helmet';\n\n// 初始化 Secret Manager\nconst secretManager = new SecretManagerServiceClient();\n\n// 從 Secret Manager 獲取密鑰\nasync function getSecret(name: string): Promise<string> {\n  const projectId = process.env.GCP_PROJECT_ID!;\n  const [version] = await secretManager.accessSecretVersion({\n    name: `projects/${projectId}/secrets/${name}/versions/latest`\n  });\n  return version.payload!.data!.toString();\n}\n\n// 設置 Express 安全中間件\nconst app = express();\n\n// 使用 Helmet 設置安全相關的 HTTP 頭\napp.use(helmet());\n\n// 設置速率限制\nconst apiLimiter = rateLimit({\n  windowMs: 15 * 60 * 1000, // 15 分鐘\n  max: 100, // 每個 IP 最多 100 個請求\n  standardHeaders: true,\n  legacyHeaders: false\n});\n\napp.use('/api/', apiLimiter);\n\n// 身份驗證中間件\nfunction authenticate(req: express.Request, res: express.Response, next: express.NextFunction) {\n  const apiKey = req.headers['x-api-key'];\n  if (!apiKey || apiKey !== process.env.API_KEY) {\n    return res.status(401).json({ error: 'Unauthorized' });\n  }\n  next();\n}\n\n// 在需要身份驗證的路由上使用\napp.use('/api/admin', authenticate);\n```",
+      "testStrategy": "1. 安全審計：進行全面的安全審計，包括代碼審計和配置審計\n2. 滲透測試：模擬攻擊者，嘗試發現和利用系統漏洞\n3. 數據隱私測試：確保用戶數據按計劃自動刪除\n4. 身份驗證測試：確保未授權用戶無法訪問受保護的資源\n5. 加密測試：確保敏感數據在傳輸和存儲過程中得到適當加密",
+      "subtasks": []
+    }
+  ],
+  "metadata": {
+    "created": "2025-06-15T12:45:11.532Z",
+    "updated": "2025-06-15T13:25:51.320Z",
+    "description": "Tasks for master context"
+  }
+}

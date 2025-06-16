@@ -1,0 +1,29 @@
+FROM python:3.9-slim
+
+WORKDIR /app
+
+# 安裝系統依賴
+RUN apt-get update && apt-get install -y \
+    gcc \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 複製依賴文件
+COPY requirements.cloudrun.txt requirements.txt
+
+# 安裝Python依賴
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 複製應用程式碼
+COPY frequency_bot_firestore.py .
+COPY app_cloudrun.py app.py
+
+# 設定環境變數
+ENV PYTHONUNBUFFERED=1
+ENV GOOGLE_APPLICATION_CREDENTIALS=/app/service-account.json
+
+# Cloud Run 會自動設定 PORT 環境變數
+EXPOSE 8080
+
+# 使用 gunicorn 作為生產伺服器
+CMD exec gunicorn --bind :${PORT:-8080} --workers 1 --threads 8 --timeout 0 app:app

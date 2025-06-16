@@ -1,0 +1,84 @@
+# Task ID: 6
+# Title: 整合 Google Gemini API 實現 AI 摘要生成
+# Status: pending
+# Dependencies: 3, 4
+# Priority: high
+# Description: 開發 AI 摘要生成模組，將匿名化對話紀錄發送給 Google Gemini API，生成對話重點摘要
+# Details:
+1. 使用 Google Generative AI Node.js 客戶端 (@google/generative-ai v0.1.3+) 與 Gemini API 進行集成
+2. 設計有效的提示詞 (Prompt)，指導 AI 生成條列式摘要
+3. 實現對話歷史格式化函數，將匿名化對話轉換為 Gemini API 可接受的格式
+4. 設置適當的模型參數，如溫度 (temperature)、最大輸出長度等
+5. 實現錯誤處理和重試機制，處理 API 限流或暫時不可用的情況
+6. 確保摘要內容符合隱私保護要求
+
+提示詞示例：
+```
+你是一個專業的會議記錄員，負責為 LINE 群組對話生成簡潔的摘要。
+
+請根據以下匿名化的對話記錄，生成一個條列式的重點摘要。摘要應該：
+1. 包含 3-5 個最重要的討論點或決定
+2. 使用中性、客觀的語言
+3. 不要猜測或還原用戶的真實身份
+4. 長度控制在 50-100 字之間
+5. 使用繁體中文
+
+對話記錄：
+{{anonymized_conversation}}
+
+請直接給出摘要，不要加入額外的解釋或前言。
+```
+
+代碼示例：
+```typescript
+import { GoogleGenerativeAI } from '@google/generative-ai';
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+
+async function generateSummary(conversationHistory: any[]): Promise<string> {
+  try {
+    // 格式化對話歷史
+    const formattedConversation = conversationHistory.map(msg => 
+      `${msg.pseudonym} (${new Date(msg.timestamp).toLocaleTimeString()}): ${msg.text}`
+    ).join('\n');
+    
+    // 構建提示詞
+    const prompt = `你是一個專業的會議記錄員，負責為 LINE 群組對話生成簡潔的摘要。
+
+請根據以下匿名化的對話記錄，生成一個條列式的重點摘要。摘要應該：
+1. 包含 3-5 個最重要的討論點或決定
+2. 使用中性、客觀的語言
+3. 不要猜測或還原用戶的真實身份
+4. 長度控制在 50-100 字之間
+5. 使用繁體中文
+
+對話記錄：
+${formattedConversation}
+
+請直接給出摘要，不要加入額外的解釋或前言。`;
+    
+    // 調用 Gemini API
+    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.2,
+        maxOutputTokens: 200,
+      }
+    });
+    
+    return result.response.text();
+  } catch (error) {
+    console.error('Error generating summary:', error);
+    throw error;
+  }
+}
+```
+
+# Test Strategy:
+1. 單元測試：使用模擬對話數據測試摘要生成
+2. 集成測試：確認與 Gemini API 的集成正常工作
+3. 質量評估：人工評估摘要的準確性、相關性和可讀性
+4. 性能測試：評估不同長度對話的摘要生成時間
+5. 錯誤處理測試：模擬 API 錯誤場景，確保系統能夠適當處理
+6. 隱私測試：確保摘要不包含可能洩漏用戶身份的信息

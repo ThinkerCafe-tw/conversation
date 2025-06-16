@@ -1,0 +1,48 @@
+# Task ID: 3
+# Title: 實現用戶匿名化模組
+# Status: pending
+# Dependencies: 1, 2
+# Priority: high
+# Description: 開發用戶匿名化系統，將用戶的真實 LINE userId 轉換為臨時假名，並確保映射關係在摘要週期結束後自動銷毀
+# Details:
+1. 使用 Redis 作為臨時存儲，設置 Hash 數據結構用於存儲 userId 到假名的映射
+2. 使用 ioredis (v5.3.2+) 作為 Redis 客戶端
+3. 實現匿名化函數，將真實 userId 轉換為形如「使用者A」、「使用者B」的假名
+4. 為每個群組創建獨立的命名空間，確保不同群組的假名不會混淆
+5. 設置 Redis 鍵的 TTL 為 70 分鐘，確保映射關係自動過期
+6. 實現獲取假名的函數，如果 userId 已有假名則返回現有假名，否則創建新假名
+7. 確保匿名化過程是幂等的，同一用戶在同一摘要週期內始終獲得相同假名
+
+代碼示例：
+```typescript
+import Redis from 'ioredis';
+
+const redis = new Redis(process.env.REDIS_URL);
+
+async function anonymizeUser(groupId: string, userId: string): Promise<string> {
+  const key = `group:${groupId}:users`;
+  
+  // 檢查用戶是否已有假名
+  let pseudonym = await redis.hget(key, userId);
+  
+  if (!pseudonym) {
+    // 獲取當前群組的用戶數量
+    const userCount = await redis.hlen(key);
+    // 創建新假名
+    pseudonym = `使用者${String.fromCharCode(65 + userCount)}`;
+    // 存儲映射關係
+    await redis.hset(key, userId, pseudonym);
+    // 設置 70 分鐘 TTL
+    await redis.expire(key, 70 * 60);
+  }
+  
+  return pseudonym;
+}
+```
+
+# Test Strategy:
+1. 單元測試：確保同一用戶在同一週期內獲得相同假名
+2. 單元測試：確保不同用戶獲得不同假名
+3. 集成測試：確認 Redis TTL 設置正確，映射關係在 70 分鐘後自動過期
+4. 壓力測試：模擬大量用戶同時發送消息，確保匿名化系統能夠處理高並發
+5. 安全測試：確保無法從假名反向推導出真實 userId

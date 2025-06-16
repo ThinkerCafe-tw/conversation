@@ -1,0 +1,64 @@
+# Task ID: 5
+# Title: 實現定時觸發系統
+# Status: pending
+# Dependencies: 1
+# Priority: medium
+# Description: 開發定時觸發系統，在每個小時的整點自動觸發摘要任務
+# Details:
+1. 使用 Google Cloud Scheduler 設置定時任務，每小時觸發一次
+2. 創建一個安全的 API 端點，用於接收 Cloud Scheduler 的觸發請求
+3. 實現身份驗證機制，確保只有授權的 Cloud Scheduler 可以觸發任務
+4. 設計任務隊列系統，避免同時處理過多摘要任務導致系統過載
+5. 實現錯誤處理和重試機制
+
+配置示例：
+```yaml
+# Cloud Scheduler 配置
+name: hourly-summary-trigger
+description: "Triggers hourly summary generation"
+schedule: "0 * * * *"  # 每小時整點觸發
+timeZone: "Asia/Taipei"
+target:
+  httpTarget:
+    uri: "https://your-service-url/api/trigger-summary"
+    httpMethod: POST
+    headers:
+      Content-Type: application/json
+    body: base64encoded({"auth_token": "your-secret-token"})
+```
+
+代碼示例：
+```typescript
+import express from 'express';
+
+const app = express();
+
+app.post('/api/trigger-summary', async (req, res) => {
+  try {
+    // 驗證請求
+    if (req.body.auth_token !== process.env.SCHEDULER_AUTH_TOKEN) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    // 獲取所有活躍群組
+    const activeGroups = await getActiveGroups();
+    
+    // 將摘要任務添加到隊列
+    for (const groupId of activeGroups) {
+      await enqueueTask('generate-summary', { groupId });
+    }
+    
+    res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('Error triggering summary:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+```
+
+# Test Strategy:
+1. 單元測試：確保 API 端點正確驗證請求
+2. 集成測試：確認 Cloud Scheduler 能夠成功觸發任務
+3. 模擬測試：模擬不同時區的整點時間，確保任務在正確的時間觸發
+4. 負載測試：評估系統同時處理多個群組摘要任務的能力
+5. 故障恢復測試：模擬任務失敗場景，確保重試機制正常工作

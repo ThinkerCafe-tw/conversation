@@ -1,0 +1,61 @@
+# Task ID: 2
+# Title: 實現 LINE Bot 整合與訊息接收
+# Status: pending
+# Dependencies: 1
+# Priority: high
+# Description: 開發 LINE Bot 的基本功能，包括接收群組訊息、處理 Webhook 事件，以及實現基本的群組加入/離開處理
+# Details:
+1. 在 LINE Developers 平台創建一個新的 Messaging API Channel
+2. 使用 @line/bot-sdk (最新版本，目前是 v7.5.2) 實現 Webhook 接收器
+3. 設置 LINE Bot 的基本配置，包括頻道訪問令牌和頻道密鑰
+4. 實現以下 Webhook 事件處理：
+   - 文本消息事件 (message.text)
+   - 加入群組事件 (join)
+   - 離開群組事件 (leave)
+5. 設計群組管理數據結構，用於跟踪 Bot 已加入的群組
+6. 實現基本的錯誤處理和日誌記錄
+7. 確保 Webhook URL 通過 HTTPS 訪問
+
+代碼示例：
+```typescript
+import { Client, middleware, WebhookEvent, TextMessage } from '@line/bot-sdk';
+import express from 'express';
+
+const config = {
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN!,
+  channelSecret: process.env.LINE_CHANNEL_SECRET!
+};
+
+const client = new Client(config);
+const app = express();
+
+app.post('/webhook', middleware(config), async (req, res) => {
+  try {
+    await Promise.all(req.body.events.map(handleEvent));
+    res.status(200).end();
+  } catch (err) {
+    console.error(err);
+    res.status(500).end();
+  }
+});
+
+async function handleEvent(event: WebhookEvent) {
+  if (event.type === 'message' && event.message.type === 'text') {
+    // 處理文本消息
+    await processGroupMessage(event);
+  } else if (event.type === 'join') {
+    // 處理加入群組事件
+    await handleJoinEvent(event);
+  } else if (event.type === 'leave') {
+    // 處理離開群組事件
+    await handleLeaveEvent(event);
+  }
+}
+```
+
+# Test Strategy:
+1. 使用 LINE 的 Webhook 測試工具驗證 Webhook 端點
+2. 創建測試群組，將 Bot 添加到群組中，確認加入事件被正確處理
+3. 在測試群組中發送消息，確認消息被正確接收
+4. 模擬 Bot 被移出群組，確認離開事件被正確處理
+5. 使用單元測試模擬 LINE Webhook 事件

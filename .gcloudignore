@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+ENV/
+
+# Local files
+.env
+.env.*
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Test files
+test_*.py
+
+# Old versions
+*_backup.py
+*.backup
+
+# Documentation
+*.md
+
+# Git
+.git/
+.gitignore
+
+# Other files we don't need
+sentry_bot.py
+frequency_bot.py
+app_cloudrun.py
+Dockerfile.cloudrun
+requirements.cloudrun.txt

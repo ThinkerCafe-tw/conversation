@@ -1,0 +1,59 @@
+# Task ID: 7
+# Title: 實現摘要發送功能
+# Status: pending
+# Dependencies: 2, 6
+# Priority: medium
+# Description: 開發摘要發送模組，將 AI 生成的摘要文本以公開訊息的形式發送回原本的 LINE 群組
+# Details:
+1. 使用 LINE Messaging API 的 pushMessage 方法發送摘要
+2. 設計摘要消息的格式，包括標題、時間範圍和內容
+3. 實現錯誤處理和重試機制，處理消息發送失敗的情況
+4. 添加消息發送記錄，用於監控和調試
+
+代碼示例：
+```typescript
+import { Client } from '@line/bot-sdk';
+
+const client = new Client({
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN!,
+  channelSecret: process.env.LINE_CHANNEL_SECRET!
+});
+
+async function sendSummary(groupId: string, summary: string): Promise<void> {
+  try {
+    const now = new Date();
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    
+    const timeRangeText = `${oneHourAgo.getHours()}:00 - ${now.getHours()}:00`;
+    const messageText = `📋 過去一小時 (${timeRangeText}) 的對話摘要：\n\n${summary}`;
+    
+    await client.pushMessage(groupId, {
+      type: 'text',
+      text: messageText
+    });
+    
+    console.log(`Summary sent to group ${groupId}`);
+  } catch (error) {
+    console.error(`Error sending summary to group ${groupId}:`, error);
+    
+    // 如果是可重試的錯誤，添加到重試隊列
+    if (isRetryableError(error)) {
+      await enqueueRetry('send-summary', { groupId, summary });
+    }
+    
+    throw error;
+  }
+}
+
+function isRetryableError(error: any): boolean {
+  // 判斷錯誤是否可重試
+  return error.statusCode >= 500 || error.code === 'ETIMEDOUT';
+}
+```
+
+# Test Strategy:
+1. 單元測試：確保消息格式正確
+2. 集成測試：確認與 LINE API 的集成正常工作
+3. 端到端測試：在測試群組中驗證摘要發送
+4. 錯誤處理測試：模擬消息發送失敗場景，確保重試機制正常工作
+5. 用戶體驗測試：評估摘要在不同設備上的顯示效果

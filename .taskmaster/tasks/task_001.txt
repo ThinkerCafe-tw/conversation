@@ -1,0 +1,24 @@
+# Task ID: 1
+# Title: 設置專案基礎架構與開發環境
+# Status: pending
+# Dependencies: None
+# Priority: high
+# Description: 建立專案基礎架構，包括代碼倉庫、CI/CD 流程、開發環境配置，以及設置所需的 GCP 服務
+# Details:
+1. 建立 Git 代碼倉庫，設置分支保護規則和 PR 流程
+2. 配置 Node.js (v18+) 開發環境，使用 TypeScript 作為主要開發語言
+3. 設置 ESLint, Prettier 等代碼質量工具
+4. 在 GCP 上設置以下服務：
+   - Cloud Run 用於部署 API 服務
+   - Memorystore for Redis 用於臨時數據存儲
+   - Cloud Scheduler 用於定時任務
+   - Secret Manager 用於管理 API 密鑰
+5. 設置 GitHub Actions 或 Cloud Build 用於 CI/CD 流程
+6. 建立開發、測試和生產環境的配置文件
+7. 設置日誌記錄系統，使用 Cloud Logging
+8. 建立基本的專案文檔，包括 README, API 文檔等
+
+# Test Strategy:
+1. 確認所有 GCP 服務能夠正確配置和訪問
+2. 驗證 CI/CD 流程能夠自動部署到開發環境
+3. 確保團隊成員能夠克隆代碼庫並運行開發環境

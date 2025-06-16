@@ -1,0 +1,71 @@
+# Task ID: 9
+# Title: 實現監控與日誌系統
+# Status: pending
+# Dependencies: 8
+# Priority: medium
+# Description: 開發監控與日誌系統，用於追蹤系統性能、錯誤和用戶行為
+# Details:
+1. 使用 Google Cloud Monitoring 設置系統監控
+2. 設計結構化日誌格式，包含關鍵信息但不包含敏感數據
+3. 實現關鍵指標的收集和報告，如：
+   - 每小時處理的消息數量
+   - 摘要生成時間
+   - API 調用成功率
+   - 錯誤率和類型
+4. 設置告警機制，在關鍵指標超出閾值時通知團隊
+5. 實現簡單的管理 API，用於查詢系統狀態
+
+監控指標示例：
+```typescript
+import { Monitoring } from '@google-cloud/monitoring';
+
+const monitoring = new Monitoring.MetricServiceClient();
+
+async function recordMetric(metricType: string, value: number, labels: Record<string, string> = {}) {
+  const projectId = process.env.GCP_PROJECT_ID!;
+  const metricPath = monitoring.projectMetricDescriptorPath(projectId, metricType);
+  
+  const dataPoint = {
+    interval: {
+      endTime: {
+        seconds: Math.floor(Date.now() / 1000)
+      }
+    },
+    value: {
+      doubleValue: value
+    }
+  };
+  
+  const timeSeriesData = {
+    metric: {
+      type: metricPath,
+      labels: labels
+    },
+    resource: {
+      type: 'global',
+      labels: {
+        project_id: projectId
+      }
+    },
+    points: [dataPoint]
+  };
+  
+  await monitoring.createTimeSeries({
+    name: monitoring.projectPath(projectId),
+    timeSeries: [timeSeriesData]
+  });
+}
+
+// 使用示例
+async function trackSummaryGeneration(groupId: string, durationMs: number, messageCount: number) {
+  await recordMetric('custom.googleapis.com/sentry/summary_generation_time', durationMs, { groupId });
+  await recordMetric('custom.googleapis.com/sentry/message_count', messageCount, { groupId });
+}
+```
+
+# Test Strategy:
+1. 單元測試：確保指標收集正確
+2. 集成測試：確認與 Cloud Monitoring 的集成正常工作
+3. 負載測試：評估監控系統在高負載下的性能
+4. 告警測試：模擬異常情況，確保告警機制正常工作
+5. 日誌審計：確保日誌不包含敏感信息

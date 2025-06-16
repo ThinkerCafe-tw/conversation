@@ -1,0 +1,67 @@
+# Task ID: 8
+# Title: 實現完整的端到端流程
+# Status: pending
+# Dependencies: 2, 3, 4, 5, 6, 7
+# Priority: high
+# Description: 整合所有模組，實現從接收消息到生成摘要再到發送摘要的完整流程
+# Details:
+1. 設計主要的業務邏輯流程，將各個模組整合在一起
+2. 實現消息處理流程：接收 -> 匿名化 -> 存儲
+3. 實現摘要生成流程：觸發 -> 獲取歷史 -> 生成摘要 -> 發送
+4. 添加全局錯誤處理和日誌記錄
+5. 實現系統狀態監控
+
+代碼示例：
+```typescript
+// 消息處理流程
+async function processGroupMessage(event: MessageEvent) {
+  try {
+    const groupId = event.source.groupId!;
+    const userId = event.source.userId!;
+    const text = event.message.text;
+    
+    // 匿名化用戶
+    const pseudonym = await anonymizeUser(groupId, userId);
+    
+    // 存儲消息
+    await storeMessage(groupId, pseudonym, text);
+    
+    console.log(`Message from ${pseudonym} in group ${groupId} processed`);
+  } catch (error) {
+    console.error('Error processing message:', error);
+  }
+}
+
+// 摘要生成流程
+async function generateAndSendSummary(groupId: string) {
+  try {
+    // 獲取過去一小時的消息
+    const endTime = Date.now();
+    const startTime = endTime - 60 * 60 * 1000;
+    const messages = await getMessagesInTimeRange(groupId, startTime, endTime);
+    
+    // 如果沒有消息，跳過摘要生成
+    if (messages.length === 0) {
+      console.log(`No messages in group ${groupId} in the past hour, skipping summary`);
+      return;
+    }
+    
+    // 生成摘要
+    const summary = await generateSummary(messages);
+    
+    // 發送摘要
+    await sendSummary(groupId, summary);
+    
+    console.log(`Summary for group ${groupId} generated and sent`);
+  } catch (error) {
+    console.error(`Error generating and sending summary for group ${groupId}:`, error);
+  }
+}
+```
+
+# Test Strategy:
+1. 集成測試：驗證完整流程的正確性
+2. 端到端測試：在測試環境中模擬真實用戶場景
+3. 負載測試：評估系統在高負載下的性能
+4. 故障恢復測試：模擬各種故障場景，確保系統能夠恢復
+5. 用戶體驗測試：評估整體用戶體驗
