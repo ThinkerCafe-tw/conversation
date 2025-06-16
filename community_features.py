@@ -16,6 +16,7 @@ from word_chain_formatter import (
     format_chain_status
 )
 from google.cloud import firestore # Added for joke feature
+import random # For new get_random_joke strategy
 
 logger = logging.getLogger(__name__)
 
@@ -484,66 +485,48 @@ class CommunityFeatures:
         """從 Firestore 獲取隨機笑話，並快取其 ID 給用戶"""
         if not self.db:
             return {'success': False, 'message': '❌ 笑話功能資料庫未連接'}
-
         try:
-            # Generate a random key to start searching from
-            # Firestore IDs are somewhat lexicographically distributed
-            random_key = self.db.collection('jokes').document().id
-
-            # Query for jokes with ID >= random_key
-            query = self.db.collection('jokes') \
-                            .where(firestore.FieldPath.document_id(), '>=', random_key) \
-                            .where('status', '==', 'approved') \
-                            .limit(1)
-            docs_cursor = query.stream() # Use cursor for potentially large result sets
-            docs = list(docs_cursor) # Convert to list to check length and access elements
-
-            if not docs:
-                # If no doc found >= random_key, try < random_key (wraparound)
-                query = self.db.collection('jokes') \
-                                .where(firestore.FieldPath.document_id(), '<', random_key) \
+            FETCH_LIMIT = 50
+            jokes_query = self.db.collection('jokes') \
                                 .where('status', '==', 'approved') \
-                                .limit(1)
-                docs_cursor_lt = query.stream()
-                docs = list(docs_cursor_lt)
+                                .limit(FETCH_LIMIT)
 
-            if docs:
-                joke_doc = docs[0] # Get the DocumentSnapshot
-                joke_firestore_id = joke_doc.id
-                joke_data = joke_doc.to_dict()
+            approved_jokes_docs = list(jokes_query.stream())
+
+            if approved_jokes_docs:
+                selected_joke_doc = random.choice(approved_jokes_docs)
+
+                joke_firestore_id = selected_joke_doc.id
+                joke_data = selected_joke_doc.to_dict()
 
                 joke_user = joke_data.get('user_id', '匿名用戶')
                 joke_text_content = joke_data.get('text', '這個笑話不見了...')
 
-                # Cache the joke_firestore_id for the user who requested it
-                if user_id_for_cache and self.connected: # Check Redis connection
+                if user_id_for_cache and self.connected:
                     try:
                         redis_key = f"user:{user_id_for_cache}:last_joke_id"
-                        self.redis.setex(redis_key, 300, joke_firestore_id) # 5-minute expiry
+                        self.redis.setex(redis_key, 300, joke_firestore_id)
                         logger.info(f"Cached last joke ID {joke_firestore_id} for user {user_id_for_cache}")
                     except Exception as e_redis:
                         logger.error(f"Failed to cache last joke ID for user {user_id_for_cache}: {e_redis}")
 
-                return {
+                response_data = {
                     'success': True,
                     'joke': {
-                        'id': joke_firestore_id, # Include joke ID
+                        'id': joke_firestore_id,
                         'text': joke_text_content,
                         'user': joke_user
                     },
-                    'message': f"🗣️ {joke_user} 分享的笑話：\n\n{joke_text_content}" # Base message
+                    'message': f"🗣️ {joke_user} 分享的笑話：\n\n{joke_text_content}"
                 }
 
-                # Attempt to add social context
                 social_context_str = ""
                 if self.graph and self.graph.connected and user_id_for_cache:
                     try:
                         friend_ids = self.graph.get_friends_who_liked_joke(user_id_for_cache, joke_firestore_id)
                         if friend_ids:
-                            # Limit to display a few names to keep message concise
-                            display_friends = friend_ids[:2] # Show up to 2 names
+                            display_friends = friend_ids[:2]
                             friends_list_str = ", ".join(display_friends)
-
                             if len(friend_ids) == 1:
                                 social_context_str = f"\n\n💡 你的朋友 {friends_list_str} 也喜歡這個笑話！"
                             elif len(friend_ids) > 1:
@@ -555,13 +538,12 @@ class CommunityFeatures:
                     except Exception as e_social:
                         logger.error(f"Error getting joke social context for joke {joke_firestore_id}: {e_social}")
 
-                # Append social context if available
                 response_data['message'] += social_context_str
                 return response_data
             else:
                 return {'success': False, 'message': '目前還沒有笑話，快來輸入「笑話 [內容]」分享一個吧！'}
         except Exception as e:
-            logger.error(f"獲取笑話失敗: {e}")
+            logger.error(f"獲取笑話失敗: Type: {type(e).__name__}, Details: {e}") # Enhanced logging
             return {'success': False, 'message': '😥 獲取笑話時發生錯誤，請稍後再試'}
 
     def like_last_joke(self, user_id: str) -> Dict:
