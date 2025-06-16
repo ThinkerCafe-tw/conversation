@@ -8,6 +8,7 @@ import time
 import logging
 from datetime import datetime, timedelta
 from google.cloud import firestore
+from google.cloud.firestore_v1 import Increment
 from google.api_core import retry
 import google.generativeai as genai
 import sentry_sdk
@@ -67,7 +68,7 @@ class FrequencyBotFirestore:
         # 更新統計（使用 merge 避免覆蓋）
         stats_ref = self.db.collection(self.broadcasts_collection).document(str(current_hour))
         batch.set(stats_ref, {
-            'message_count': firestore.Increment(1),
+            'message_count': Increment(1),
             'updated_at': datetime.now(),
             'hour': current_hour
         }, merge=True)
@@ -76,7 +77,7 @@ class FrequencyBotFirestore:
         if user_id:
             contrib_ref = stats_ref.collection('contributors').document(user_id)
             batch.set(contrib_ref, {
-                'count': firestore.Increment(1),
+                'count': Increment(1),
                 'last_message': datetime.now()
             }, merge=True)
         

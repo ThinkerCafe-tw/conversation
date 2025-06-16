@@ -404,7 +404,15 @@ class CollectiveMemorySystem:
         formatted = []
         
         for i, msg in enumerate(messages):
-            time_str = datetime.fromtimestamp(msg.get("timestamp", 0)).strftime("%H:%M")
+            # 處理 timestamp 可能是 datetime 物件或數字的情況
+            timestamp = msg.get("timestamp", 0)
+            if isinstance(timestamp, datetime):
+                time_str = timestamp.strftime("%H:%M")
+            elif isinstance(timestamp, (int, float)):
+                time_str = datetime.fromtimestamp(timestamp).strftime("%H:%M")
+            else:
+                time_str = "??:??"
+            
             content = msg.get("content", "")[:50]  # 限制長度
             formatted.append(f"{i+1}. [{time_str}] {content}")
         
