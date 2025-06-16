@@ -15,14 +15,16 @@ from word_chain_formatter import (
     format_chain_error,
     format_chain_status
 )
+from google.cloud import firestore # Added for joke feature
 
 logger = logging.getLogger(__name__)
 
 
 class CommunityFeatures:
-    def __init__(self, redis_client, knowledge_graph=None):
+    def __init__(self, redis_client, knowledge_graph=None, db=None): # Added db
         self.redis = redis_client
         self.graph = knowledge_graph
+        self.db = db # Store db instance
         self.api_usage_key = "api:usage:gemini"
         self.not_connected_message = "❌ 社群功能暫時無法使用"
         
@@ -393,6 +395,13 @@ class CommunityFeatures:
     
     def get_emergency_summary(self) -> Dict:
         """獲取防災資訊摘要"""
+        if not self.connected: # Ensure redis is connected for existing features
+            logger.warning("Emergency summary attempted but Redis not connected.")
+            # Return a structure that format_emergency_info_message can handle
+            return {
+                'shelters': {'total': 0, 'verified': 0, 'capacity': 0},
+                'supplies': {'available': 0}
+            }
         # 統計避難所
         shelter_ids = list(self.redis.smembers("shelters:all"))
         verified_shelters = 0
@@ -420,6 +429,69 @@ class CommunityFeatures:
                 'available': available_supplies
             }
         }
+
+    # ========== Joke Features ==========
+    def add_joke(self, user_id: str, joke_text: str) -> Dict:
+        """新增笑話到 Firestore"""
+        if not self.db:
+            return {'success': False, 'message': '❌ 笑話功能資料庫未連接'}
+
+        try:
+            joke_data = {
+                'text': joke_text,
+                'user_id': user_id, # Already anonymized hash from app.py
+                'timestamp': firestore.SERVER_TIMESTAMP,
+                'status': 'approved' # Default status
+            }
+            self.db.collection('jokes').add(joke_data)
+            logger.info(f"笑話已新增 by {user_id}")
+            return {'success': True, 'message': '😄 你的笑話已成功收錄！感謝分享！'}
+        except Exception as e:
+            logger.error(f"新增笑話失敗: {e}")
+            return {'success': False, 'message': '😥 新增笑話失敗，請稍後再試'}
+
+    def get_random_joke(self) -> Dict:
+        """從 Firestore 獲取隨機笑話"""
+        if not self.db:
+            return {'success': False, 'message': '❌ 笑話功能資料庫未連接'}
+
+        try:
+            # Generate a random key to start searching from
+            # Firestore IDs are somewhat lexicographically distributed
+            random_key = self.db.collection('jokes').document().id
+
+            # Query for jokes with ID >= random_key
+            query = self.db.collection('jokes') \
+                            .where(firestore.FieldPath.document_id(), '>=', random_key) \
+                            .where('status', '==', 'approved') \
+                            .limit(1)
+            docs = list(query.stream())
+
+            if not docs:
+                # If no doc found >= random_key, try < random_key (wraparound)
+                query = self.db.collection('jokes') \
+                                .where(firestore.FieldPath.document_id(), '<', random_key) \
+                                .where('status', '==', 'approved') \
+                                .limit(1)
+                docs = list(query.stream())
+
+            if docs:
+                joke_data = docs[0].to_dict()
+                # Ensure user_id is present, provide default if not (for older data perhaps)
+                joke_user = joke_data.get('user_id', '匿名用戶')
+                return {
+                    'success': True,
+                    'joke': {
+                        'text': joke_data.get('text', '這個笑話不見了...'),
+                        'user': joke_user
+                    },
+                    'message': f"🗣️ {joke_user} 分享的笑話：\n\n{joke_data.get('text', '這個笑話不見了...')}"
+                }
+            else:
+                return {'success': False, 'message': '目前還沒有笑話，快來輸入「笑話 [內容]」分享一個吧！'}
+        except Exception as e:
+            logger.error(f"獲取笑話失敗: {e}")
+            return {'success': False, 'message': '😥 獲取笑話時發生錯誤，請稍後再試'}
 
 
 def format_api_stats_message(stats: Dict) -> str:

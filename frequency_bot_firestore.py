@@ -17,6 +17,23 @@ from collective_memory import CollectiveMemorySystem, MemoryAnalyzer
 
 logger = logging.getLogger(__name__)
 
+CONTRIBUTION_BADGES = [
+    (1, "🌱", "新芽"),
+    (10, "🌿", "成長"),
+    (50, "🌳", "茁壯"),
+    (100, "🌲", "大樹"),
+    (500, "🏆", "傳奇")
+]
+
+def get_contribution_badge(count):
+    """根據訊息數量獲取貢獻徽章"""
+    badge_str = ""
+    for threshold, emoji, name in reversed(CONTRIBUTION_BADGES):
+        if count >= threshold:
+            badge_str = f"{emoji} {name} ({count}則)"
+            break
+    return badge_str
+
 
 class FrequencyBotFirestore:
     def __init__(self, knowledge_graph=None):
@@ -81,6 +98,10 @@ class FrequencyBotFirestore:
                 'last_message': datetime.now()
             }, merge=True)
         
+        # 追蹤全域用戶貢獻 (for badges)
+        if user_id:
+            self.track_contributor(user_id, batch) # Pass batch for atomic update
+
         # 執行批次寫入
         batch.commit()
         
@@ -269,11 +290,27 @@ class FrequencyBotFirestore:
         """獲取特定時間的廣播"""
         doc = self.db.collection(self.generated_collection).document(str(hour)).get()
         return doc.to_dict() if doc.exists else None
-    
-    def track_contributor(self, user_id: str):
-        """追蹤貢獻者（已整合在 add_to_broadcast 中）"""
-        pass  # 功能已整合
-    
+
+    def track_contributor(self, user_id: str, batch=None):
+        """追蹤用戶的總貢獻量 (for badges)"""
+        if not user_id:
+            return
+
+        global_contrib_ref = self.db.collection('global_user_contributions').document(user_id)
+
+        if batch:
+            batch.set(global_contrib_ref, {
+                'total_count': firestore.Increment(1),
+                'last_contribution_at': datetime.now()
+            }, merge=True)
+        else:
+            # Fallback if no batch provided, though batch is preferred from add_to_broadcast
+            global_contrib_ref.set({
+                'total_count': firestore.Increment(1),
+                'last_contribution_at': datetime.now()
+            }, merge=True)
+        logger.info(f"全域貢獻已更新 for user {user_id}")
+
     def get_contributors_stats(self, hour: int):
         """獲取貢獻者統計（已整合在 get_frequency_stats 中）"""
         pass  # 功能已整合
@@ -473,8 +510,23 @@ def format_stats_message(stats):
     return message
 
 
-def format_instant_feedback(message_count, user_rank=None):
-    """格式化即時回饋訊息"""
+def format_instant_feedback(message_count, user_rank=None, user_id=None, db=None):
+    """格式化即時回饋訊息，包含徽章"""
+    badge_str = ""
+    if user_id and db:
+        try:
+            user_contrib_ref = db.collection('global_user_contributions').document(user_id)
+            user_contrib_doc = user_contrib_ref.get()
+            user_total_messages = 0
+            if user_contrib_doc.exists:
+                user_total_messages = user_contrib_doc.to_dict().get('total_count', 0)
+
+            if user_total_messages > 0: # Only show badge if they have contributed
+                 badge_str = get_contribution_badge(user_total_messages)
+        except Exception as e:
+            logger.error(f"Error fetching user total contributions for badge: {e}")
+            # Proceed without badge if there's an error
+
     milestone_messages = {
         1: "🎉 第一則訊息！開啟這小時的共振\n\n💡 輸入「玩」探索更多功能",
         10: "🌱 種子發芽了！已有10則訊息\n\n💡 輸入「統計」查看即時進度",
@@ -505,11 +557,17 @@ def format_instant_feedback(message_count, user_rank=None):
             feedback = f"🔥 第{message_count}則！共振升溫"
         else:
             feedback = f"⚡ 第{message_count}則！即將達標"
-    
+
+    # Prepend badge string if available and user is not new (message_count > 1 for current pool, or has badge)
+    # For a brand new user (first message ever), the new user welcome from app.py is better.
+    # This feedback is for subsequent messages.
+    if badge_str:
+        feedback = f"{badge_str}\n{feedback}"
+
     # 加入用戶排名資訊
     if user_rank and user_rank <= 10:
         rank_emoji = "🥇" if user_rank == 1 else "🥈" if user_rank == 2 else "🥉" if user_rank == 3 else "🏅"
-        feedback += f"\n{rank_emoji} 你是第{user_rank}名貢獻者！"
+        feedback += f"\n\n{rank_emoji} 你是本小時第 {user_rank} 名貢獻者！" # Clarified "本小時"
     
     return feedback
 
