@@ -1,14 +1,93 @@
 # Cloud Build 配置檔案
 steps:
-  # 建置 Docker 映像
+  # 步驟 1: 執行單元測試
+  - name: 'python:3.9'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        pip install -r requirements.txt
+        pip install pytest pytest-cov pytest-mock
+        # 設定測試環境變數
+        export ENVIRONMENT=test
+        export GOOGLE_CLOUD_PROJECT=$PROJECT_ID
+        # 執行測試
+        pytest tests/ -v --cov=. --cov-report=xml --cov-report=term
+    id: 'run-tests'
+  
+  # 步驟 2: 執行程式碼品質檢查
+  - name: 'python:3.9'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        pip install flake8 black isort
+        # 檢查程式碼風格
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # 檢查import排序
+        isort . --check-only --diff
+        # 檢查程式碼格式
+        black . --check --diff
+    id: 'code-quality'
+    waitFor: ['run-tests']
+  
+  # 步驟 3: 建置 Docker 映像
   - name: 'gcr.io/cloud-builders/docker'
     args: ['build', '-t', 'gcr.io/$PROJECT_ID/frequency-bot', '-f', 'Dockerfile.cloudrun', '.']
+    id: 'build-image'
+    waitFor: ['code-quality']
   
-  # 推送映像到 Container Registry
+  # 步驟 4: 推送映像到 Container Registry
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'gcr.io/$PROJECT_ID/frequency-bot']
+    id: 'push-image'
+    waitFor: ['build-image']
   
-  # 部署到 Cloud Run
+  # 步驟 5: 部署到 Cloud Run (Staging)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'frequency-bot-staging'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/frequency-bot'
+      - '--region'
+      - 'asia-east1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--set-env-vars'
+      - 'ENVIRONMENT=staging'
+      - '--max-instances'
+      - '2'
+      - '--min-instances'
+      - '0'
+      - '--memory'
+      - '512Mi'
+      - '--timeout'
+      - '300'
+      - '--no-traffic'
+    id: 'deploy-staging'
+    waitFor: ['push-image']
+  
+  # 步驟 6: 執行整合測試
+  - name: 'python:3.9'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        pip install requests pytest
+        # 等待服務啟動
+        sleep 30
+        # 獲取 staging URL
+        export STAGING_URL=$(gcloud run services describe frequency-bot-staging --region=asia-east1 --format='value(status.url)')
+        # 執行整合測試
+        pytest tests/integration/ -v --base-url=$STAGING_URL
+    id: 'integration-tests'
+    waitFor: ['deploy-staging']
+  
+  # 步驟 7: 部署到 Cloud Run (Production)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -32,6 +111,8 @@ steps:
       - '512Mi'
       - '--timeout'
       - '300'
+    id: 'deploy-production'
+    waitFor: ['integration-tests']
 
 # 映像配置
 images:
@@ -40,3 +121,8 @@ images:
 # 建置選項
 options:
   logging: CLOUD_LOGGING_ONLY
+  machineType: 'N1_HIGHCPU_8'
+  timeout: '1800s' # 30 分鐘
+
+# 異常處理
+# 如果任何步驟失敗，整個建置將停止

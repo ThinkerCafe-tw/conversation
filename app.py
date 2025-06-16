@@ -26,6 +26,7 @@ from community_features import (
 from knowledge_graph import KnowledgeGraph
 from intent_analyzer import IntentAnalyzer
 from security_filter import SecurityFilter
+from rate_limiter import rate_limit, add_rate_limit_headers, RateLimits
 
 # 導入優化模組
 try:
@@ -61,6 +62,9 @@ else:
     print("警告: Sentry DSN 未設定或使用範例值，Sentry 未啟用")
 
 app = Flask(__name__)
+
+# 註冊速率限制響應頭
+app.after_request(add_rate_limit_headers)
 
 # 設定日誌
 logging.basicConfig(level=logging.INFO)
@@ -162,6 +166,7 @@ if os.getenv('ENVIRONMENT', 'production') == 'development':
         raise Exception("測試 Sentry 錯誤追蹤 - 手動觸發")
 
 @app.route("/")
+@rate_limit(**RateLimits.API_QUERY)
 def index():
     """首頁"""
     return jsonify({
@@ -171,46 +176,63 @@ def index():
     })
 
 @app.route("/health")
+@rate_limit(**RateLimits.HEALTH)
 def health_check():
-    """健康檢查端點"""
+    """健康檢查端點含連線狀態"""
+    from connection_manager import connection_manager
+    
     try:
         # 檢查 Firestore 連線
-        test_doc = frequency_bot.db.collection('test').document('health_check')
-        test_doc.set({'timestamp': firestore.SERVER_TIMESTAMP})
+        firestore_status = "connected"
+        try:
+            test_doc = frequency_bot.db.collection('test').document('health_check')
+            test_doc.set({'timestamp': firestore.SERVER_TIMESTAMP})
+        except Exception as e:
+            firestore_status = "error"
+            logger.error(f"Firestore health check failed: {e}")
         
-        # 檢查 Neo4j 連線
-        neo4j_status = "disconnected"
-        if knowledge_graph:
-            try:
-                # 簡單的連線測試
-                with knowledge_graph.driver.session() as session:
-                    session.run("RETURN 1")
-                neo4j_status = "connected"
-            except:
-                neo4j_status = "error"
+        # 使用連線管理器檢查其他連線
+        connections = connection_manager.health_check()
         
         # 檢查環境變數
         env_status = {
             "LINE_TOKEN": bool(os.getenv('LINE_CHANNEL_ACCESS_TOKEN')),
             "LINE_SECRET": bool(os.getenv('LINE_CHANNEL_SECRET')),
-            "GEMINI_KEY": bool(os.getenv('GEMINI_API_KEY'))
+            "GEMINI_KEY": bool(os.getenv('GEMINI_API_KEY')),
+            "SENTRY_DSN": bool(os.getenv('SENTRY_DSN'))
         }
         
-        return jsonify({
-            "status": "healthy", 
+        # 判斷整體狀態
+        overall_status = "healthy"
+        if firestore_status != "connected":
+            overall_status = "degraded"
+        if connections and any(not healthy for healthy in connections.values()):
+            overall_status = "degraded"
+        
+        response = {
+            "status": overall_status, 
             "service": "frequency-bot",
-            "firestore": "connected",
-            "neo4j": neo4j_status,
+            "timestamp": datetime.now().isoformat(),
+            "connections": {
+                "firestore": firestore_status,
+                **connections
+            },
             "env_vars": env_status
-        }), 200
+        }
+        
+        status_code = 200 if overall_status == "healthy" else 503
+        return jsonify(response), status_code
+        
     except Exception as e:
         logger.error(f"Health check error: {str(e)}")
+        sentry_sdk.capture_exception(e)
         return jsonify({
             "status": "error",
             "message": str(e)
         }), 500
 
 @app.route("/neo4j/status")
+@rate_limit(**RateLimits.API_QUERY)
 def neo4j_status():
     """檢查 Neo4j 連接狀態和資料統計"""
     if not knowledge_graph:
@@ -244,6 +266,7 @@ def neo4j_status():
         return {"status": "unhealthy", "error": str(e)}, 503
 
 @app.route("/webhook", methods=['POST'])
+@rate_limit(**RateLimits.WEBHOOK)
 def webhook():
     logger.info("收到 webhook 請求")
     # 獲取 X-Line-Signature header
@@ -960,6 +983,7 @@ def handle_text_message(event):
 
 # 自動測試端點
 @app.route("/scheduler/test", methods=['POST'])
+@rate_limit(**RateLimits.ADMIN)
 def scheduled_test():
     """由 Cloud Scheduler 觸發的自動測試"""
     # 驗證請求來源
@@ -993,6 +1017,7 @@ def scheduled_test():
 
 # Cloud Scheduler 端點
 @app.route("/scheduler/broadcast", methods=['POST'])
+@rate_limit(**RateLimits.BROADCAST)
 def scheduled_broadcast():
     """由 Cloud Scheduler 觸發的廣播生成"""
     # 驗證請求來源（Cloud Scheduler 會帶特定 header）
@@ -1008,6 +1033,7 @@ def scheduled_broadcast():
     return jsonify({"status": "no_messages"})
 
 @app.route("/scheduler/cleanup", methods=['POST'])
+@rate_limit(**RateLimits.ADMIN)
 def scheduled_cleanup():
     """由 Cloud Scheduler 觸發的資料清理"""
     # 驗證請求來源
@@ -1024,6 +1050,7 @@ def scheduled_cleanup():
 # 只在開發環境啟用手動觸發
 if os.getenv('ENVIRONMENT', 'production') == 'development':
     @app.route("/trigger-broadcast")
+    @rate_limit(**RateLimits.ADMIN)
     def trigger_broadcast():
         """手動觸發廣播生成（測試用）"""
         result = frequency_bot.generate_hourly_broadcast()
