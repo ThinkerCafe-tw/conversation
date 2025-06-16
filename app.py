@@ -276,6 +276,40 @@ def neo4j_status():
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}, 503
 
+@app.route("/generate-broadcast", methods=['POST'])
+@rate_limit(**RateLimits.API_QUERY)
+def generate_broadcast():
+    """手動觸發廣播生成（供 Cloud Scheduler 使用）"""
+    try:
+        logger.info("收到廣播生成請求")
+        
+        # 生成當前小時的廣播
+        broadcast_data = frequency_bot.generate_hourly_broadcast()
+        
+        if broadcast_data:
+            logger.info(f"廣播生成成功 - 小時: {broadcast_data.get('hour')}")
+            return jsonify({
+                "status": "success",
+                "message": "廣播生成成功",
+                "hour": broadcast_data.get('hour'),
+                "message_count": broadcast_data.get('message_count', 0),
+                "optimization_type": broadcast_data.get('optimization_type', 'standard')
+            })
+        else:
+            logger.info("沒有訊息需要生成廣播")
+            return jsonify({
+                "status": "no_messages",
+                "message": "本小時沒有訊息需要生成廣播"
+            })
+            
+    except Exception as e:
+        logger.error(f"廣播生成失敗: {e}")
+        sentry_sdk.capture_exception(e)
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
 @app.route("/webhook", methods=['POST'])
 @rate_limit(**RateLimits.WEBHOOK)
 def webhook():
