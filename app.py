@@ -870,8 +870,6 @@ def handle_text_message(event):
                         knowledge_graph.log_user_feature_interaction(user_id, "笑話", "submitted_joke")
                     except Exception as e_kg:
                         logger.error(f"Neo4j - Error logging 笑話 submitted_joke interaction: {e_kg}")
-            else: # joke_text is empty
-                reply_message = "🤔 笑話內容不能為空喔！請輸入「笑話 [你的笑話內容]」"
         else:
             reply_message = "❌ 社群功能（包含笑話）暫時無法使用"
 
