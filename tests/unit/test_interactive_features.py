@@ -290,6 +290,95 @@ class TestInteractiveFeatures(unittest.TestCase):
         mock_community_features.add_shelter_info.assert_called_once_with("地點A", "型態B", 100, user_id)
         mock_kg.log_user_feature_interaction.assert_called_once_with(user_id, "防災資訊", "added_shelter")
 
+    # --- Web Search Feature Tests (app.py handlers) ---
+    @patch('app.knowledge_graph')
+    @patch('app.search_service') # Mock the search_service instance in app.py
+    @patch('app.line_bot_api.reply_message')
+    def test_web_search_success_with_results(self, mock_reply_message, mock_search_service_instance, mock_kg):
+        user_id = "user_search_success"
+        query = "python programming"
+        mock_event = self._create_mock_event(f"搜尋 {query}", user_id=user_id)
+
+        mock_kg.connected = True
+        mock_search_service_instance.perform_search.return_value = {
+            "success": True,
+            "query": query,
+            "results": [
+                {"title": "Python for Beginners", "link": "example.com/python", "snippet": "Learn Python programming from scratch..."},
+                {"title": "Advanced Python", "link": "example.com/advanced", "snippet": "Deep dive into Python features..."},
+            ],
+            "total_results_available": "12300"
+        }
+
+        handle_text_message(mock_event)
+
+        mock_search_service_instance.perform_search.assert_called_once_with(query, num_results=3)
+        mock_kg.log_user_feature_interaction.assert_called_once_with(user_id, "網路搜尋", "performed_search")
+
+        self.assertTrue(mock_reply_message.called)
+        args, _ = mock_reply_message.call_args
+        reply_text = args[0].messages[0].text
+
+        self.assertIn(f"🔍 「{query}」的網路搜尋結果 (前2筆)：", reply_text)
+        self.assertIn("1. Python for Beginners", reply_text)
+        self.assertIn("📝 Learn Python programming from scratch...", reply_text)
+        self.assertIn("🔗 example.com/python", reply_text)
+        self.assertIn("2. Advanced Python", reply_text)
+
+    @patch('app.knowledge_graph')
+    @patch('app.search_service')
+    @patch('app.line_bot_api.reply_message')
+    def test_web_search_success_no_results(self, mock_reply_message, mock_search_service_instance, mock_kg):
+        user_id = "user_search_no_results"
+        query = "unfindable query string"
+        mock_event = self._create_mock_event(f"查一下 {query}", user_id=user_id)
+
+        mock_kg.connected = True
+        mock_search_service_instance.perform_search.return_value = {
+            "success": True, "query": query, "results": [], "total_results_available": "0"
+        }
+        handle_text_message(mock_event)
+        mock_search_service_instance.perform_search.assert_called_once_with(query, num_results=3)
+        mock_kg.log_user_feature_interaction.assert_called_once_with(user_id, "網路搜尋", "performed_search")
+        mock_reply_message.assert_called_once()
+        self.assertEqual(mock_reply_message.call_args[0][0].messages[0].text, f"抱歉，找不到與「{query}」相關的結果。")
+
+    @patch('app.knowledge_graph')
+    @patch('app.search_service')
+    @patch('app.line_bot_api.reply_message')
+    def test_web_search_service_error(self, mock_reply_message, mock_search_service_instance, mock_kg):
+        user_id = "user_search_error"
+        query = "trigger error"
+        mock_event = self._create_mock_event(f"search {query}", user_id=user_id)
+
+        mock_kg.connected = True # KG logging should still be attempted
+        error_message_from_service = "Test API Error from Service"
+        mock_search_service_instance.perform_search.return_value = {
+            "success": False, "error": "API Error", "message": error_message_from_service
+        }
+        handle_text_message(mock_event)
+        mock_search_service_instance.perform_search.assert_called_once_with(query, num_results=3)
+        mock_kg.log_user_feature_interaction.assert_called_once_with(user_id, "網路搜尋", "performed_search")
+        mock_reply_message.assert_called_once()
+        self.assertEqual(mock_reply_message.call_args[0][0].messages[0].text, error_message_from_service)
+
+    @patch('app.search_service')
+    @patch('app.line_bot_api.reply_message')
+    def test_web_search_empty_query(self, mock_reply_message, mock_search_service_instance):
+        mock_event = self._create_mock_event("搜尋 ") # Empty query
+        handle_text_message(mock_event)
+        mock_search_service_instance.perform_search.assert_not_called()
+        mock_reply_message.assert_called_once()
+        self.assertEqual(mock_reply_message.call_args[0][0].messages[0].text, "請輸入您想搜尋的關鍵字。\n例如：「搜尋 今天天氣如何」")
+
+    @patch('app.line_bot_api.reply_message')
+    def test_web_search_service_unavailable(self, mock_reply_message):
+        with patch('app.search_service', None): # Simulate search_service is None
+            mock_event = self._create_mock_event("搜尋 unavailable test")
+            handle_text_message(mock_event)
+            mock_reply_message.assert_called_once()
+            self.assertEqual(mock_reply_message.call_args[0][0].messages[0].text, "抱歉，網路搜尋功能目前暫時無法使用，請稍後再試。")
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -9,3 +9,4 @@ gunicorn==21.2.0
 redis==5.0.1
 neo4j==5.15.0
 jieba==0.42.1
+requests>=2.20.0
