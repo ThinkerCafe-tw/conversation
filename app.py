@@ -26,6 +26,7 @@ from community_features import (
 from knowledge_graph import KnowledgeGraph
 from intent_analyzer import IntentAnalyzer
 from security_filter import SecurityFilter
+from search_service import CustomSearchService # Added for Web Search
 
 # 導入優化模組
 try:
@@ -154,6 +155,16 @@ else:
     smart_error_handler = None
     performance_dashboard = None
     core_optimizer = None
+
+# Initialize Search Service
+search_service = None
+try:
+    # Pass the existing redis_client to CustomSearchService
+    search_service = CustomSearchService(redis_client=redis_client)
+    logger.info("Search Service initialized successfully.")
+except Exception as e:
+    logger.error(f"Failed to initialize Search Service: {e}")
+    # search_service will remain None, and feature will be handled gracefully
 
 # 只在開發環境啟用測試端點
 if os.getenv('ENVIRONMENT', 'production') == 'development':
@@ -383,7 +394,7 @@ def handle_text_message(event):
         menu_items = []
         for option_text, option_command in menu_data["options"]:
             menu_items.append(f"{option_text}\n→ 輸入「{option_command}」")
-        
+
         reply_message = f"{menu_data['title']}\n━━━━━━━━━━━━━━\n\n"
         reply_message += "\n\n".join(menu_items)
         reply_message += f"\n\n{menu_data['footer']}"
@@ -418,6 +429,11 @@ def handle_text_message(event):
 😂 **笑話**
     → 輸入「說個笑話」聽笑話
     → 輸入「笑話 [內容]」分享你的笑話
+    → 看到喜歡的笑話？試試輸入「讚」或 👍 給它個讚！
+
+🌐 **網路搜尋**
+    → 輸入「搜尋 [關鍵字]」或「search [關鍵字]」
+    → 例如：「搜尋 台灣今日天氣」
 
 💬 **參與共振**
     → 直接發送任何訊息，就能成為每小時廣播的一部分！
@@ -434,7 +450,57 @@ def handle_text_message(event):
             )
         )
         return
-    
+
+    # Web Search Handler
+    SEARCH_KEYWORDS = ["搜尋 ", "search ", "找一下 ", "查一下 ", "搜 ", "查 "]
+    user_message_text = event.message.text # Store original case for query, but compare lower for trigger
+    user_message_lower = user_message_text.lower()
+    search_trigger_word = None
+    for keyword in SEARCH_KEYWORDS:
+        if user_message_lower.startswith(keyword):
+            search_trigger_word = keyword
+            break
+
+    if search_trigger_word:
+        query = user_message_text[len(search_trigger_word):].strip()
+        reply_text = ""
+
+        if not query:
+            reply_text = "請輸入您想搜尋的關鍵字。\n例如：「搜尋 今天天氣如何」"
+        elif not search_service:
+            reply_text = "抱歉，網路搜尋功能目前暫時無法使用，請稍後再試。"
+        else:
+            search_result = search_service.perform_search(query, num_results=3) # Get top 3 results
+
+            if knowledge_graph and knowledge_graph.connected and user_id:
+                try:
+                    knowledge_graph.log_user_feature_interaction(user_id, "網路搜尋", "performed_search")
+                except Exception as e_kg_log:
+                    logger.error(f"Failed to log search feature interaction to Neo4j: {e_kg_log}")
+
+            if search_result['success']:
+                if not search_result['results']:
+                    reply_text = f"抱歉，找不到與「{query}」相關的結果。"
+                else:
+                    reply_parts = [f"🔍 「{query}」的網路搜尋結果 (前{len(search_result['results'])}筆)：\n"]
+                    for i, item in enumerate(search_result['results']):
+                        title = item.get('title', 'N/A')
+                        link = item.get('link', '#')
+                        snippet = item.get('snippet', '...')
+                        snippet_preview = snippet[:80] + "..." if len(snippet) > 80 else snippet
+                        reply_parts.append(f"\n{i+1}. {title}\n   📝 {snippet_preview}\n   🔗 {link}")
+                    reply_text = "".join(reply_parts)
+            else:
+                reply_text = search_result.get('message', '😥 搜尋時發生錯誤，請稍後再試。')
+
+        line_bot_api.reply_message(
+            ReplyMessageRequest(
+                replyToken=event.reply_token,
+                messages=[TextMessage(text=reply_text)]
+            )
+        )
+        return
+
     # 檢查是否為查詢廣播
     if event.message.text.lower() in ['廣播', 'broadcast', 'b', '頻率', 'freq']:
         # 回傳最新廣播
