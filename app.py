@@ -5,6 +5,7 @@ from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 import os
 import time
+from datetime import datetime
 from dotenv import load_dotenv
 import sentry_sdk
 from sentry_sdk.integrations.flask import FlaskIntegration
@@ -95,17 +96,51 @@ try:
         socket_connect_timeout=5
     )
     redis_client.ping()
-    # 傳入知識圖譜實例以支援雙寫
-    community = CommunityFeatures(redis_client, knowledge_graph)
-    logger.info("Redis 連接成功")
+    # 傳入知識圖譜實例以支援雙寫及 Firestore db
+    community = CommunityFeatures(redis_client, knowledge_graph, frequency_bot.db)
+    logger.info("Redis 連接成功, CommunityFeatures 初始化完畢 (含 Firestore DB)")
 except Exception as e:
-    logger.warning(f"Redis 連接失敗: {e}，社群功能將受限")
+    logger.warning(f"Redis 連接失敗或 CommunityFeatures 初始化失敗: {e}，社群功能將受限")
     redis_client = None
     community = None
 
 # 初始化安全過濾器
 security_filter = SecurityFilter()
 logger.info("安全過濾器初始化成功")
+
+# 定義快捷選單資料結構
+QUICK_MENUS = {
+    "玩": {
+        "title": "🎮 選擇遊戲",
+        "options": [
+            ("🔗 文字接龍", "接龍範例"),
+            ("📊 發起投票", "投票範例"),
+            ("💭 查看廣播", "廣播"),
+            ("💝 更多功能", "幫助")
+        ],
+        "footer": "💡 輸入「指令」即可開始！"
+    },
+    "看": {
+        "title": "📊 查看資訊",
+        "options": [
+            ("📈 即時統計", "統計"),
+            ("🤖 API用量", "API統計"),
+            ("🌊 最新廣播", "廣播"),
+            ("🏆 排行榜", "排行")
+        ],
+        "footer": "💡 輸入「指令」即可開始！"
+    },
+    "救": {
+        "title": "🚨 防災互助",
+        "options": [
+            ("🏠 避難所", "防災資訊"),
+            ("📝 提供避難所", "防空範例"),
+            ("🥫 物資分享", "物資範例"),
+            ("🗺 查看地圖", "防災地圖")
+        ],
+        "footer": "💡 輸入「指令」即可開始！"
+    }
+}
 
 # 初始化優化系統
 if OPTIMIZATIONS_AVAILABLE:
@@ -341,97 +376,56 @@ def handle_text_message(event):
     
     # 擴展自然語言理解
     text_lower = event.message.text.lower()
-    
-    # 快捷選單系統 - 支援更多自然語言
-    if any(keyword in text_lower for keyword in ['玩', '遊戲', 'play', '想玩', '玩遊戲', '無聊', '好無聊', '有什麼好玩']):
-        menu_message = """🎮 選擇遊戲
-━━━━━━━━━━━━━━
-🔗 文字接龍
-→ 輸入「接龍 蘋果」開始
-→ 輸入「接龍狀態」查看進度
 
-📊 發起投票  
-→ 輸入「投票範例」
-
-💭 查看廣播
-→ 輸入「廣播」
-
-💡 直接輸入上方指令即可開始！"""
+    # 快捷選單系統
+    if text_lower in QUICK_MENUS:
+        menu_data = QUICK_MENUS[text_lower]
+        menu_items = []
+        for option_text, option_command in menu_data["options"]:
+            menu_items.append(f"{option_text}\n→ 輸入「{option_command}」")
+        
+        reply_message = f"{menu_data['title']}\n━━━━━━━━━━━━━━\n\n"
+        reply_message += "\n\n".join(menu_items)
+        reply_message += f"\n\n{menu_data['footer']}"
         
         line_bot_api.reply_message(
             ReplyMessageRequest(
                 replyToken=event.reply_token,
-                messages=[TextMessage(text=menu_message)]
+                messages=[TextMessage(text=reply_message)]
             )
         )
         return
-    
-    if event.message.text in ['看', '查看', 'view']:
-        menu_message = """📊 查看資訊
-━━━━━━━━━━━━━━
-📈 即時統計
-→ 輸入「統計」
 
-🤖 API 用量
-→ 輸入「API統計」
-
-🌊 最新廣播
-→ 輸入「廣播」
-
-💡 直接輸入上方指令即可查看！"""
-        
-        line_bot_api.reply_message(
-            ReplyMessageRequest(
-                replyToken=event.reply_token,
-                messages=[TextMessage(text=menu_message)]
-            )
-        )
-        return
-    
-    if event.message.text in ['救', '防災', '幫助', 'help']:
-        menu_message = """🚨 防災互助
-━━━━━━━━━━━━━━
-🏠 查看避難所
-→ 輸入「防災資訊」
-
-📝 提供避難所
-→ 輸入「防空範例」
-
-🥫 物資分享
-→ 輸入「物資範例」
-
-💡 或輸入「幫助」看所有功能"""
-        
-        line_bot_api.reply_message(
-            ReplyMessageRequest(
-                replyToken=event.reply_token,
-                messages=[TextMessage(text=menu_message)]
-            )
-        )
-        return
-    
     # 幫助功能
+    # Note: The 'help' keyword might be part of QUICK_MENUS "玩" (更多功能 -> 幫助)
+    # If user types "幫助" directly, this handler will catch it.
+    # If "幫助" is also a quick menu key, it would be handled by the QUICK_MENUS logic first.
+    # Current QUICK_MENUS keys are "玩", "看", "救", so "幫助" is fine here.
     if event.message.text.lower() in ['幫助', 'help', '說明', '?']:
         help_message = """🌊 頻率共振 Bot 使用說明
 ━━━━━━━━━━━━━━
+👋 你好！我是大家的AI夥伴。試試輸入以下關鍵字探索功能：
 
-📊 資訊查詢
-• 廣播 - 查看最新廣播
-• 統計 - 查看即時進度
-• API統計 - 查看API使用量
-• 防災 - 查看防災資訊
+🎮 **玩** - 探索互動遊戲
+    → 文字接龍、發起投票等
 
-🎮 互動功能  
-• 接龍 [詞] - 開始文字接龍
-• 投票 主題/選項1/選項2 - 發起投票
-• 數字 - 參與投票
-• 投票結果 - 查看結果
+📊 **看** - 查看即時資訊
+    → 廣播、統計、API用量等
 
-🚨 防災互助
-• 防空 地點 類型 容量 - 提供避難所
-• 物資 類型 數量 地區 聯絡 - 分享物資
+🚨 **救** - 獲取防災互助資訊
+    → 避難所查詢、物資分享等
 
-💬 發送任意文字參與廣播！"""
+😂 **笑話**
+    → 輸入「說個笑話」聽笑話
+    → 輸入「笑話 [內容]」分享你的笑話
+
+💬 **參與共振**
+    → 直接發送任何訊息，就能成為每小時廣播的一部分！
+    → 輸入「廣播」查看最新共振內容
+    → 輸入「統計」查看本小時參與進度
+
+💡 小提示：許多功能都有範例指令，例如「投票範例」、「接龍範例」。
+❓ 如需更詳細指令，請參考專案說明文件。"""
         
         line_bot_api.reply_message(
             ReplyMessageRequest(
@@ -655,7 +649,7 @@ def handle_text_message(event):
         return
     
     # 檢查是否為接龍（如果有進行中的接龍）
-    if community and community.connected and len(event.message.text) >= 2:
+    if community and community.connected and len(event.message.text) >= 2: # Ensure community object exists
         chain_data = community.redis.get("word_chain:current")
         if chain_data:
             result = community.continue_word_chain(event.message.text, user_id)
@@ -668,25 +662,59 @@ def handle_text_message(event):
                 )
                 return
     
+    # 笑話功能
+    if event.message.text.startswith('笑話 '):
+        if community: # Check if community features are available
+            joke_text = event.message.text[3:].strip()
+            if not joke_text:
+                reply_message = "🤔 笑話內容不能為空喔！請輸入「笑話 [你的笑話內容]」"
+            else:
+                result = community.add_joke(user_id, joke_text) # user_id is already hashed
+                reply_message = result['message']
+        else:
+            reply_message = "❌ 社群功能（包含笑話）暫時無法使用"
+
+        line_bot_api.reply_message(
+            ReplyMessageRequest(
+                replyToken=event.reply_token,
+                messages=[TextMessage(text=reply_message)]
+            )
+        )
+        return
+
+    if event.message.text.lower() in ['說個笑話', '聽笑話']:
+        if community: # Check if community features are available
+            result = community.get_random_joke()
+            reply_message = result['message']
+        else:
+            reply_message = "❌ 社群功能（包含笑話）暫時無法使用"
+
+        line_bot_api.reply_message(
+            ReplyMessageRequest(
+                replyToken=event.reply_token,
+                messages=[TextMessage(text=reply_message)]
+            )
+        )
+        return
+
     # 檢查是否為新用戶的第一次互動
     if event.message.text.lower() in ['hi', 'hello', '你好', '嗨', '哈囉', '安安']:
-        # 使用智慧引導系統生成個人化問候
+        is_new_user = False # Default to false
         if smart_onboarding and user_id:
-            welcome_message = smart_onboarding.get_smart_greeting(user_id)
+            is_new_user = smart_onboarding.is_new_user(user_id)
+
+        if is_new_user:
+            welcome_message = "👋 歡迎來到頻率共振！\n\n我是大家共創的 AI 助手\n直接輸入文字就能參與廣播喔！\n\n想玩點什麼嗎？\n━━━━━━━━━━━━\n🎮 輸入「玩」看互動遊戲\n📊 輸入「看」查看統計\n🚨 輸入「救」查看防災資訊\n━━━━━━━━━━━━\n或直接打字聊天也可以！"
         else:
-            welcome_message = """👋 歡迎來到頻率共振！
+            hour = datetime.now().hour
+            if 6 <= hour < 12:
+                greeting = "早安"
+            elif 12 <= hour < 18:
+                greeting = "午安"
+            else:
+                greeting = "晚安"
+            welcome_message = f"{greeting}！今天想做什麼呢？\n輸入「玩」「看」「救」快速開始"
 
-我會把大家的訊息編織成廣播
-直接打字就能參與喔！
-
-🔥 快速開始：
-━━━━━━━━━━━━━━
-輸入「玩」→ 互動遊戲
-輸入「看」→ 查看統計  
-輸入「救」→ 防災資訊
-
-或直接聊天也可以！"""
-        
         # 如果有智慧推薦功能，加入個人化建議
         if intent_analyzer and user_id:
             suggestions = intent_analyzer.get_feature_suggestions(user_id)
@@ -766,7 +794,7 @@ def handle_text_message(event):
 
 或繼續聊天，你的每句話都會成為廣播的一部分！"""
     else:
-        feedback = format_instant_feedback(message_count, user_rank)
+        feedback = format_instant_feedback(message_count, user_rank, user_id, frequency_bot.db)
     
     # 如果達到1000則，立即生成廣播
     if message_count >= 1000:
