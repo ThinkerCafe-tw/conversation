@@ -487,7 +487,10 @@ class CommunityFeatures:
     def get_random_joke(self, user_id_for_cache: Optional[str] = None) -> Dict: # Added user_id for caching
         """從 Firestore 獲取隨機笑話，並快取其 ID 給用戶"""
         if not self.db:
+            logger.error("get_random_joke called but self.db is None")
             return {'success': False, 'message': '❌ 笑話功能資料庫未連接'}
+        
+        logger.info(f"get_random_joke called for user: {user_id_for_cache}")
         try:
             # 使用不同的隨機策略來獲取笑話
             random_strategy = random.randint(1, 3)
@@ -591,6 +594,7 @@ class CommunityFeatures:
             
         except Exception as e:
             logger.error(f"獲取笑話失敗: Type: {type(e).__name__}, Details: {e}")
+            logger.error(f"Error occurred with db={self.db}, user_id_for_cache={user_id_for_cache}")
             import traceback
             logger.error(f"完整錯誤追蹤:\n{traceback.format_exc()}")
             
