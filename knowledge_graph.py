@@ -49,6 +49,8 @@ class KnowledgeGraph:
                 "CREATE CONSTRAINT IF NOT EXISTS FOR (m:Message) REQUIRE m.id IS UNIQUE",
                 "CREATE CONSTRAINT IF NOT EXISTS FOR (f:Feature) REQUIRE f.name IS UNIQUE",
                 "CREATE CONSTRAINT IF NOT EXISTS FOR (t:Topic) REQUIRE t.name IS UNIQUE",
+                "CREATE CONSTRAINT IF NOT EXISTS FOR (v:Vote) REQUIRE v.id IS UNIQUE", # Added in previous task, ensure it's here
+                "CREATE CONSTRAINT IF NOT EXISTS FOR (j:Joke) REQUIRE j.id IS UNIQUE", # For new Joke nodes
             ]
             
             for constraint in constraints:
@@ -351,40 +353,183 @@ class KnowledgeGraph:
             "投票": "互動",
             "統計": "資訊",
             "廣播": "資訊",
-            "防空": "防災",
+            "防空": "防災", # Assuming "防空" is mapped to "防災資訊" feature name
+            "防災資訊": "防災", # Explicitly for "防災資訊" feature name
             "物資": "防災",
-            "API統計": "系統"
+            "API統計": "系統",
+            "笑話": "娛樂" # Added category for Joke feature
         }
         
+        # Exact match preferred
+        if feature_name in categories:
+            return categories[feature_name]
+
+        # Fallback to keyword based
         for keyword, category in categories.items():
-            if keyword in feature_name:
+            if keyword in feature_name: # This might lead to "防空" being "防災"
                 return category
                 
         return "其他"
+
+    def log_user_feature_interaction(self, user_id: str, feature_name: str, interaction_type: str = "used"):
+        """記錄用戶與特定功能的互動"""
+        if not self.connected or not self.driver:
+            logger.warning(f"Neo4j not connected, skipping log_user_feature_interaction for user {user_id}, feature {feature_name}")
+            return
+
+        try:
+            with self.driver.session() as session:
+                session.run("""
+                    MERGE (u:User {id: $user_id})
+                    MERGE (f:Feature {name: $feature_name})
+                    ON CREATE SET
+                        f.category = $category,
+                        f.usage_count = 0,
+                        f.created_at = datetime()
+                    ON MATCH SET // Ensure category is set even if feature node already exists
+                        f.category = $category
+
+                    CREATE (u)-[r:INTERACTED_WITH_FEATURE {type: $interaction_type, timestamp: datetime()}]->(f)
+                    SET f.usage_count = coalesce(f.usage_count, 0) + 1
+                """, user_id=user_id, feature_name=feature_name,
+                   interaction_type=interaction_type, category=self._get_feature_category(feature_name))
+                logger.info(f"User {user_id} interaction '{interaction_type}' with feature '{feature_name}' logged.")
+        except Exception as e:
+            logger.error(f"Error logging user feature interaction to Neo4j: {e}")
+            # Optionally re-raise
+            # raise
+
+    def log_user_vote(self, user_id: str, vote_id: str, vote_topic: str, option_chosen: str):
+        """記錄用戶投票行為到 Neo4j"""
+        if not self.connected or not self.driver:
+            logger.warning(f"Neo4j not connected, skipping log_user_vote for user {user_id}, vote {vote_id}")
+            return
+
+        try:
+            with self.driver.session() as session:
+                session.run("""
+                    MERGE (u:User {id: $user_id})
+                    MERGE (v:Vote {id: $vote_id})
+                    ON CREATE SET
+                        v.topic = $vote_topic,
+                        v.created_at = datetime(),
+                        v.last_activity_at = datetime()
+                    ON MATCH SET
+                        v.last_activity_at = datetime()
+
+                    MERGE (u)-[r:VOTED {option: $option_chosen}]->(v)
+                    ON CREATE SET
+                        r.timestamp = datetime()
+                """, user_id=user_id, vote_id=vote_id, vote_topic=vote_topic, option_chosen=option_chosen)
+                logger.info(f"User {user_id} vote for '{option_chosen}' on vote '{vote_id}' ({vote_topic}) logged.")
+        except Exception as e:
+            logger.error(f"Error logging user vote to Neo4j: {e}")
+            # Optionally re-raise or handle more gracefully depending on desired app behavior
+            raise
+
+    def log_joke_submission(self, user_id: str, joke_id: str, joke_text_preview: str):
+        """記錄用戶提交笑話的行為到 Neo4j"""
+        if not self.connected or not self.driver:
+            logger.warning(f"Neo4j not connected, skipping log_joke_submission for user {user_id}, joke {joke_id}")
+            return
+        try:
+            with self.driver.session() as session:
+                result = session.run("""
+                    MERGE (u:User {id: $user_id})
+                    MERGE (j:Joke {id: $joke_id})
+                    ON CREATE SET
+                        j.text_preview = $joke_text_preview,
+                        j.created_at = datetime(),
+                        j.like_count = 0 // Initialize like_count
+                    MERGE (u)-[r:SUBMITTED {timestamp: datetime()}]->(j)
+                    RETURN j
+                """, user_id=user_id, joke_id=joke_id, joke_text_preview=joke_text_preview)
+                logger.info(f"User {user_id} submitted joke {joke_id} logged. Preview: {joke_text_preview}")
+                return result.single()["j"]
+        except Exception as e:
+            logger.error(f"Error logging joke submission to Neo4j for user {user_id}, joke {joke_id}: {e}")
+            raise
+
+    def log_joke_like(self, user_id: str, joke_id: str):
+        """記錄用戶按讚笑話的行為到 Neo4j"""
+        if not self.connected or not self.driver:
+            logger.warning(f"Neo4j not connected, skipping log_joke_like for user {user_id}, joke {joke_id}")
+            return
+        try:
+            with self.driver.session() as session:
+                result = session.run("""
+                    MERGE (u:User {id: $user_id})
+                    MERGE (j:Joke {id: $joke_id})
+                    ON CREATE SET // Should ideally not happen if joke is liked after being seen
+                        j.created_at = datetime(),
+                        j.like_count = 0
+                    MERGE (u)-[r:LIKED {timestamp: datetime()}]->(j)
+                    SET j.like_count = coalesce(j.like_count, 0) + 1
+                    RETURN j
+                """, user_id=user_id, joke_id=joke_id)
+                logger.info(f"User {user_id} liked joke {joke_id} logged.")
+                return result.single()["j"]
+        except Exception as e:
+            logger.error(f"Error logging joke like to Neo4j for user {user_id}, joke {joke_id}: {e}")
+            raise
+
+    def get_friends_who_liked_joke(self, user_id: str, joke_id: str, limit: int = 3) -> List[str]:
+        """找出也喜歡同一個笑話的朋友們 (簡化版：其他也按讚的用戶)"""
+        if not self.connected or not self.driver:
+            logger.warning(f"Neo4j not connected, skipping get_friends_who_liked_joke for user {user_id}, joke {joke_id}")
+            return []
         
+        try:
+            with self.driver.session() as session:
+                # Query for other users who liked the same joke, excluding the current user.
+                result = session.run("""
+                    MATCH (currentUser:User {id: $user_id})-[:LIKED]->(j:Joke {id: $joke_id})
+                    MATCH (otherUser:User)-[:LIKED]->(j)
+                    WHERE currentUser <> otherUser
+                    RETURN otherUser.id AS friend_id
+                    LIMIT $limit
+                """, user_id=user_id, joke_id=joke_id, limit=limit)
+
+                friend_ids = [record["friend_id"] for record in result]
+                if friend_ids:
+                    logger.info(f"Found {len(friend_ids)} other users who liked joke {joke_id} for user {user_id}.")
+                return friend_ids
+        except Exception as e:
+            logger.error(f"Error getting friends who liked joke {joke_id} for user {user_id}: {e}")
+            return [] # Return empty list on error
+
     def export_graph_data(self, format: str = "json") -> str:
         """匯出圖資料供視覺化"""
+        if not self.connected or not self.driver: # Check connection for export too
+            logger.warning("Neo4j not connected, cannot export graph data.")
+            return json.dumps({"nodes": [], "edges": []}) if format == "json" else {"nodes": [], "edges": []}
+
         with self.driver.session() as session:
-            # 獲取所有節點和關係
-            nodes = session.run("""
+            nodes_query = """
                 MATCH (n)
-                WHERE n:User OR n:Feature OR n:Topic
+                WHERE n:User OR n:Feature OR n:Topic OR n:Vote OR n:Joke // Added Joke
                 RETURN id(n) as id, labels(n)[0] as type, 
                        properties(n) as properties
                 LIMIT 1000
-            """)
+            """
+            nodes_result = session.run(nodes_query)
             
-            edges = session.run("""
+            edges_query = """
                 MATCH (n1)-[r]->(n2)
-                WHERE (n1:User OR n1:Message) AND 
-                      (n2:Message OR n2:Feature OR n2:Topic)
+                WHERE ((n1:User OR n1:Message) AND
+                       (n2:Message OR n2:Feature OR n2:Topic OR n2:Vote OR n2:Joke))
+                   OR (n1:User AND r:VOTED AND n2:Vote)
+                   OR (n1:User AND r:SUBMITTED AND n2:Joke)
+                   OR (n1:User AND r:LIKED AND n2:Joke)
+                   OR (n1:User AND r:INTERACTED_WITH_FEATURE AND n2:Feature) // Added INTERACTED_WITH_FEATURE
                 RETURN id(n1) as source, id(n2) as target,
                        type(r) as type, properties(r) as properties
                 LIMIT 1000
-            """)
-            
+            """
+            edges_result = session.run(edges_query)
+
             graph_data = {
-                "nodes": [dict(n) for n in nodes],
+                "nodes": [dict(n) for n in nodes_result],
                 "edges": [dict(e) for e in edges]
             }
             
