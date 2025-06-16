@@ -591,12 +591,20 @@ class CommunityFeatures:
             
         except Exception as e:
             logger.error(f"獲取笑話失敗: Type: {type(e).__name__}, Details: {e}")
+            import traceback
+            logger.error(f"完整錯誤追蹤:\n{traceback.format_exc()}")
+            
             # 更詳細的錯誤訊息
             if "IndexError" in str(type(e)):
                 return {'success': False, 'message': '😅 笑話庫正在裝填中，請稍後再試！'}
             elif "Permission" in str(e):
                 return {'success': False, 'message': '❌ 無法存取笑話資料庫，請聯絡管理員'}
+            elif "credentials" in str(e).lower() or "auth" in str(e).lower():
+                return {'success': False, 'message': '❌ 資料庫認證失敗，請聯絡管理員'}
+            elif "not found" in str(e).lower():
+                return {'success': False, 'message': '😅 笑話庫正在初始化，請稍後再試！'}
             else:
+                # 生產環境不要顯示詳細錯誤
                 return {'success': False, 'message': '😥 獲取笑話時發生錯誤，請稍後再試'}
 
     def like_last_joke(self, user_id: str) -> Dict:
