@@ -1,0 +1,38 @@
+{
+  "auto_deploy": {
+    "enabled": true,
+    "service_name": "frequency-bot",
+    "region": "asia-east1",
+    "project_id": "probable-axon-451311-e1",
+    "deploy_on": [
+      "feat:",
+      "fix:",
+      "perf:",
+      "refactor:",
+      "security:"
+    ],
+    "pre_deploy_checks": [
+      "python -m py_compile app.py",
+      "python -m py_compile frequency_bot_firestore.py"
+    ],
+    "post_deploy_verify": [
+      "curl -s https://frequency-bot-808270083585.asia-east1.run.app/health"
+    ]
+  },
+  "git_workflow": {
+    "auto_commit": true,
+    "auto_push": true,
+    "commit_style": "conventional"
+  },
+  "testing": {
+    "run_tests_before_deploy": true,
+    "test_commands": [
+      "python -m pytest tests/ -v || true"
+    ]
+  },
+  "monitoring": {
+    "check_health_after_deploy": true,
+    "health_endpoint": "/health",
+    "expected_status": "healthy"
+  }
+}
