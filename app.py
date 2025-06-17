@@ -28,6 +28,7 @@ from intent_analyzer import IntentAnalyzer
 from security_filter import SecurityFilter
 from rate_limiter import rate_limit, add_rate_limit_headers, RateLimits
 from search_service import CustomSearchService # Added for Web Search
+from response_cache import ResponseCache, CacheStrategies
 
 # 導入優化模組
 try:
@@ -89,21 +90,20 @@ except Exception as e:
 # 初始化頻率廣播機器人 (傳入知識圖譜以支援集體記憶)
 frequency_bot = FrequencyBotFirestore(knowledge_graph)
 
-# 初始化 Redis 和社群功能
+# 初始化 Redis 和社群功能 (使用連線池)
 try:
-    redis_client = redis.Redis(
+    # 使用連線管理器的 Redis 連線池
+    redis_pool = connection_manager.setup_redis(
         host=os.getenv('REDIS_HOST', 'localhost'),
         port=int(os.getenv('REDIS_PORT', 6379)),
         password=os.getenv('REDIS_PASSWORD'),
-        username=os.getenv('REDIS_USERNAME', 'default'),
-        decode_responses=True,
-        socket_keepalive=True,
-        socket_connect_timeout=5
+        username=os.getenv('REDIS_USERNAME', 'default')
     )
+    redis_client = redis_pool.get_connection()
     redis_client.ping()
     # 傳入知識圖譜實例以支援雙寫及 Firestore db
     community = CommunityFeatures(redis_client, knowledge_graph, frequency_bot.db)
-    logger.info("Redis 連接成功, CommunityFeatures 初始化完畢 (含 Firestore DB)")
+    logger.info("Redis 連接成功 (使用連線池), CommunityFeatures 初始化完畢 (含 Firestore DB)")
 except Exception as e:
     logger.warning(f"Redis 連接失敗或 CommunityFeatures 初始化失敗: {e}，社群功能將受限")
     redis_client = None
@@ -159,6 +159,12 @@ else:
     smart_error_handler = None
     performance_dashboard = None
     core_optimizer = None
+
+# Initialize Response Cache
+cache = None
+if redis_client:
+    cache = ResponseCache(redis_client)
+    logger.info("Response cache initialized successfully.")
 
 # Initialize Search Service
 search_service = None
@@ -577,8 +583,20 @@ def handle_text_message(event):
     
     # 檢查是否為查詢統計
     if event.message.text.lower() in ['統計', 'stats', '進度', 'progress', '排行']:
-        stats = frequency_bot.get_frequency_stats()
-        reply_message = format_stats_message(stats)
+        # 使用快取減少計算
+        cache_key = f"stats:{int(time.time()) // 60}"  # 每分鐘更新一次
+        
+        if cache and redis_client:
+            cached_stats = cache.get(cache_key)
+            if cached_stats:
+                reply_message = cached_stats
+            else:
+                stats = frequency_bot.get_frequency_stats()
+                reply_message = format_stats_message(stats)
+                cache.set(cache_key, reply_message, ttl=60)  # 快取1分鐘
+        else:
+            stats = frequency_bot.get_frequency_stats()
+            reply_message = format_stats_message(stats)
         
         line_bot_api.reply_message(
             ReplyMessageRequest(

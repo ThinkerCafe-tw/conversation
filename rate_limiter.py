@@ -46,7 +46,7 @@ class RateLimiter:
     
     def is_allowed(self, identifier: str, limit: int, window: int) -> Tuple[bool, Dict]:
         """
-        檢查請求是否允許
+        檢查請求是否允許 (優化版本)
         
         Args:
             identifier: 識別符（如 IP 或用戶 ID）
@@ -66,40 +66,61 @@ class RateLimiter:
             window_start = now - window
             key = f"rate_limit:{identifier}"
             
-            # 使用 Redis 管道提高效能
-            pipe = self.redis.pipeline()
+            # 使用 Lua 腳本原子性執行，減少網路往返
+            lua_script = """
+            local key = KEYS[1]
+            local now = tonumber(ARGV[1])
+            local window_start = tonumber(ARGV[2])
+            local limit = tonumber(ARGV[3])
+            local window = tonumber(ARGV[4])
             
-            # 移除過期的請求記錄
-            pipe.zremrangebyscore(key, 0, window_start)
+            -- 移除過期記錄
+            redis.call('zremrangebyscore', key, 0, window_start)
             
-            # 獲取當前請求數
-            pipe.zcard(key)
+            -- 獲取當前請求數
+            local current = redis.call('zcard', key)
             
-            # 添加當前請求
-            pipe.zadd(key, {str(now): now})
+            if current < limit then
+                -- 允許請求，添加記錄
+                redis.call('zadd', key, now, now)
+                redis.call('expire', key, window)
+                
+                -- 獲取最早的請求時間
+                local earliest = redis.call('zrange', key, 0, 0, 'WITHSCORES')
+                local reset_time = 0
+                if earliest[1] then
+                    reset_time = earliest[2] + window
+                else
+                    reset_time = now + window
+                end
+                
+                return {1, current + 1, limit - current - 1, reset_time}
+            else
+                -- 拒絕請求
+                local earliest = redis.call('zrange', key, 0, 0, 'WITHSCORES')
+                local reset_time = earliest[2] + window
+                return {0, current, 0, reset_time}
+            end
+            """
             
-            # 設置過期時間
-            pipe.expire(key, window)
+            # 註冊並執行 Lua 腳本
+            if not hasattr(self, '_script'):
+                self._script = self.redis.register_script(lua_script)
             
-            results = pipe.execute()
-            current_requests = results[1]
+            result = self._script(
+                keys=[key],
+                args=[now, window_start, limit, window]
+            )
             
-            # 計算剩餘請求數
-            remaining = max(0, limit - current_requests - 1)
-            
-            # 獲取最早的請求時間以計算重置時間
-            earliest = self.redis.zrange(key, 0, 0, withscores=True)
-            if earliest:
-                reset_time = int(earliest[0][1] + window)
-            else:
-                reset_time = int(now + window)
-            
-            allowed = current_requests < limit
+            allowed = bool(result[0])
+            current_requests = result[1]
+            remaining = result[2]
+            reset_time = int(result[3])
             
             return allowed, {
                 "allowed": allowed,
                 "limit": limit,
-                "remaining": remaining if allowed else 0,
+                "remaining": remaining,
                 "reset": reset_time,
                 "retry_after": reset_time - int(now) if not allowed else None
             }

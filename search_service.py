@@ -60,7 +60,7 @@ class CustomSearchService:
 
     def perform_search(self, query: str, num_results: int = 5) -> dict:
         """
-        Performs a search using the Google Custom Search JSON API, with rate limiting.
+        Performs a search using the Google Custom Search JSON API, with rate limiting and caching.
 
         Args:
             query (str): The search query.
@@ -72,6 +72,19 @@ class CustomSearchService:
         if not self.api_key or not self.cx_id:
             logger.error("Custom Search API key or CX ID is not configured.")
             return {'success': False, 'error': 'API key or CX ID is not configured.'}
+
+        # 檢查快取
+        cache_key = f"search:{query}:{num_results}"
+        if self.redis:
+            try:
+                cached_result = self.redis.get(cache_key)
+                if cached_result:
+                    logger.info(f"Search cache hit for query: '{query}'")
+                    result = json.loads(cached_result)
+                    result['from_cache'] = True
+                    return result
+            except Exception as e:
+                logger.warning(f"Cache retrieval failed: {e}")
 
         # Check rate limit before proceeding
         if not self._check_and_increment_usage():
@@ -113,12 +126,22 @@ class CustomSearchService:
             total_results_available = response_json.get('searchInformation', {}).get('totalResults', '0')
             logger.info(f"Search successful for query '{query}'. Found {len(results)} results. Total available: {total_results_available}")
 
-            return {
+            search_result = {
                 "success": True,
                 "query": query,
                 "results": results,
                 "total_results_available": total_results_available
             }
+
+            # 快取結果 (15分鐘)
+            if self.redis and results:
+                try:
+                    self.redis.setex(cache_key, 900, json.dumps(search_result))
+                    logger.info(f"Search results cached for query: '{query}'")
+                except Exception as e:
+                    logger.warning(f"Failed to cache search results: {e}")
+
+            return search_result
 
         except requests.exceptions.HTTPError as http_err:
             logger.error(f"HTTP error occurred during custom search: {http_err} - Response: {response.text}")

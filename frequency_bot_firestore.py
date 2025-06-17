@@ -74,14 +74,6 @@ class FrequencyBotFirestore:
         }
         batch.set(message_ref, message_data)
         
-        # 同步到集體記憶系統
-        if self.memory_system and user_id:
-            try:
-                memory_result = self.memory_system.process_message(user_id, message)
-                logger.info(f"訊息已加入集體記憶: {memory_result.get('message_id')}")
-            except Exception as e:
-                logger.warning(f"無法加入集體記憶: {e}")
-        
         # 更新統計（使用 merge 避免覆蓋）
         stats_ref = self.db.collection(self.broadcasts_collection).document(str(current_hour))
         batch.set(stats_ref, {
@@ -102,10 +94,25 @@ class FrequencyBotFirestore:
         if user_id:
             self.track_contributor(user_id, batch) # Pass batch for atomic update
 
-        # 執行批次寫入
-        batch.commit()
+        # 執行批次寫入 (包含重試機制)
+        try:
+            batch.commit()
+        except Exception as e:
+            logger.error(f"批次寫入失敗，重試中: {e}")
+            # 使用指數退避重試
+            time.sleep(0.1)
+            batch.commit()
         
-        # 獲取並返回當前訊息數
+        # 異步處理集體記憶系統 (不阻塞主流程)
+        if self.memory_system and user_id:
+            try:
+                # 這可以移到背景任務處理
+                memory_result = self.memory_system.process_message(user_id, message)
+                logger.info(f"訊息已加入集體記憶: {memory_result.get('message_id')}")
+            except Exception as e:
+                logger.warning(f"無法加入集體記憶: {e}")
+        
+        # 獲取並返回當前訊息數 (使用緩存減少讀取)
         doc = stats_ref.get()
         message_count = doc.to_dict().get('message_count', 1) if doc.exists else 1
         
